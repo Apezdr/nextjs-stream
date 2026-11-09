@@ -140,6 +140,18 @@ describe('upsertPresenceHeartbeat', () => {
     expect(row).not.toHaveProperty('isPaused')
   })
 
+  it('names the episode the catalog says it is, over what the client sent', async () => {
+    mockResolve.mockResolvedValue({ mediaId: 'mid:special3', mediaType: 'tv', showId: SHOW, seasonNumber: 0, episodeNumber: 3 })
+    await heartbeat({ metadata: { mediaType: 'tv', seasonNumber: 1, episodeNumber: 9 } })
+    expect(rows[0]).toMatchObject({ seasonNumber: 0, episodeNumber: 3 })
+  })
+
+  it('keeps the client’s numbers when the catalog has none', async () => {
+    mockResolve.mockResolvedValue(null)
+    await heartbeat({ metadata: { mediaType: 'tv', seasonNumber: 1, episodeNumber: 9 } })
+    expect(rows[0]).toMatchObject({ seasonNumber: 1, episodeNumber: 9 })
+  })
+
   it('a paused keep-alive extends the paused expiry and keeps the position and its time', async () => {
     jest.useFakeTimers({ now: new Date('2026-11-08T12:00:00Z') })
     await heartbeat({ isPaused: true })

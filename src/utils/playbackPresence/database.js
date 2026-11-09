@@ -99,8 +99,10 @@ export async function upsertPresenceHeartbeat({
     const resolved = await resolveMediaIdForNid(normalizedVideoId)
     // Identity comes from the catalog, never the client: mediaId for the
     // reason upsertPlayback gives, showId because clients disagree on it (the
-    // TV app sends its route id). Nulls never reach $set either: absent means
-    // "unchanged", not "erase".
+    // TV app sends its route id), and an episode's season and episode numbers
+    // so a show page names the right one whoever reported it. The client's
+    // numbers stand only when the catalog has none. Nulls never reach $set
+    // either: absent means "unchanged", not "erase".
     const { mediaId: _clientMediaId, showId: _clientShowId, ...rawMetadata } = metadata || {}
     const safeMetadata = Object.fromEntries(
       Object.entries(rawMetadata).filter(([, v]) => v !== null && v !== undefined)
@@ -124,6 +126,8 @@ export async function upsertPresenceHeartbeat({
           ...(resolved?.mediaId && { mediaId: resolved.mediaId }),
           ...(resolved?.mediaType && { mediaType: resolved.mediaType }),
           ...(resolved?.showId && { showId: resolved.showId }),
+          ...(Number.isInteger(resolved?.seasonNumber) && { seasonNumber: resolved.seasonNumber }),
+          ...(Number.isInteger(resolved?.episodeNumber) && { episodeNumber: resolved.episodeNumber }),
           ...(deviceInfo && { deviceInfo }),
           ...(ipAddress && { ipAddress }),
           ...(localIp && { localIp }),

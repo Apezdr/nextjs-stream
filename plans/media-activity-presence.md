@@ -114,7 +114,7 @@ A receiver loaded before the deploy keeps running the old script until it relaun
 }
 ```
 
-The admin and widget surfaces show `ipAddress` and `localIp`. The personal API (step 3) decides whether to return them.
+The admin and widget surfaces show `ipAddress` and `localIp`. The personal API (step 3) leaves them out.
 
 Readers that move onto it:
 
@@ -128,13 +128,19 @@ Readers that move onto it:
 
 ## A user's own sessions
 
-- **`GET /api/authenticated/presence`** returns `{ sessions: LiveSession[] }` for the signed-in user, with optional `mediaId` / `showId` filters. It takes no `userId` parameter, ever, and is `no-store`. Under "View as" it returns the viewed user's sessions; it is a read.
-- **`/api/authenticated/media`** gains `watchingNow: LiveSession[]` next to `watchHistory`, under the same gate:
-  - movie or episode: sessions on that title;
-  - show: sessions on any of its episodes, each naming its season and episode;
-  - season: per episode.
-- **Web media pages** (movie, show, episode): a client component polls the presence endpoint every 15 s while the page is visible. It is fetched on the client, never part of a cached or prefetched shell. It shows, for example, "Playing on TV · 41:12" or "Paused on Chrome · Desktop"; on a show page it also names the episode. Placement and design are settled in step 4.
-- **TV app media pages:** the same field and endpoint, with the same UI. Handed over as a doc, since that repo is read-only from here, and shipped together with the web UI.
+Built 2026-11-09 (step 3). One module, `src/utils/playbackPresence/personal.js`, serves both:
+
+- **The shape** is the LiveSession minus `ipAddress`, `localIp`, `userId` and `device.userAgent` (`toOwnSession`); `device` is `{ type, label, platform }`. A "Playing on TV · 41:12" line needs none of those, and under "View as" this is what an admin reads as the user. The admin and widget surfaces keep them.
+- **`GET /api/authenticated/presence`** returns `{ sessions }` for the signed-in user, ranked, `no-store`. Filters: `mediaId` and/or `normalizedVideoId` (one movie or episode, by the title rule), or `showId` with an optional `season` (a show, or one season; Specials are season 0). A title filter with a show filter, a malformed `showId`, or a `season` without a `showId` is a 400. There is no `userId` parameter: it is the caller's own sessions, and under "View as" the caller is the viewed user (it is a read). A failed read is a 500, never an empty list.
+- **`/api/authenticated/media`** gains `watchingNow` whenever it is asked for `includeWatchHistory=true`, beside `watchHistory`, read off the payload's own fields (`watchingNowFor`):
+  - a movie, or an episode: sessions on that title;
+  - a season: sessions on any of its episodes; on the TV app's season page each episode in `episodes` also carries its own `watchingNow`;
+  - a show: sessions on any of its episodes.
+
+  `watchingNow: []` means nothing is live; the field is **absent** when it was not asked for or could not be read. It passes through the TV-device shape (`sanitizeTVData`) and the card shape (`sanitizeCardData`), so the web's hover cards, which ask for watch history, get it too.
+- **Season and episode numbers come from the catalog.** The write resolves them from `FlatEpisodes` with `showId` (`resolveMediaIdForNid`), so a show page names the right episode whichever client reported it. The client's numbers stand only when the catalog has none.
+- **Web media pages** (movie, show, episode, step 4): a client component polls the presence endpoint every 15 s while the page is visible. It is fetched on the client, never part of a cached or prefetched shell. It shows, for example, "Playing on TV · 41:12" or "Paused on Chrome · Desktop"; on a show page it also names the episode. Placement and design are settled in step 4.
+- **TV app media pages:** the same field and endpoint, with the same UI. Handed over as a doc, since that repo is read-only from here, and shipped together with the web UI. The canonical API contract (`docs/frontend-api-contract.md` in the TV app's repo) gains `watchingNow` and the endpoint through that doc.
 
 ## Steps
 
@@ -148,7 +154,7 @@ Each step ships on its own and comes with tests.
 
    This alone fixes the TV blinking and the "Paused" flips on the admin overview, the desktop widget and the transcoder sessions view.
 2. **Cast presence** (built 2026-11-09): the receiver writes and ends the cast's row, sender or not; `/api/cast/playback` takes `presenceOnly` and `final`; `DeviceBadge` and `getDeviceTypeLabel` learn `cast`. The original plan had the sender's mirror write the row while connected; dropped for the background-tab throttling and second-sender reasons above.
-3. **Personal API:** `GET /api/authenticated/presence` and `watchingNow` on `/api/authenticated/media`.
+3. **Personal API** (built 2026-11-09): `GET /api/authenticated/presence` and `watchingNow` on `/api/authenticated/media`; season and episode numbers resolved from the catalog at write time.
 4. **Media-page UI on web, plus the TV app hand-off doc**, shipped together.
 
 ## Decisions

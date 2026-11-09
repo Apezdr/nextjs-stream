@@ -7,28 +7,19 @@
  * then the newest heartbeat); the others are listed for the "N devices" note.
  */
 
-import { rankSessions } from './session'
+import { sessionsOnTitle } from './session'
 
 /**
- * Whether a session is on this card's title: by the durable mediaId when both
- * carry one (a session started on a since-replaced file still belongs to the
- * card), by the URL-hash identity only when one of them has no mediaId yet.
- */
-function isSameTitle(video, session) {
-  if (video.mediaId && session.mediaId) return video.mediaId === session.mediaId
-  return Boolean(video.normalizedVideoId) && video.normalizedVideoId === session.normalizedVideoId
-}
-
-/**
- * The live sessions for one card, ranked.
+ * The live sessions for one card, ranked. The same title rule as every other
+ * surface (isOnTitle in ./session.js).
  *
  * @param {Object} video - a recently-watched card
  * @param {Array<Object>} sessions - LiveSessions (playbackPresence/live.js)
  * @returns {Array<Object>}
  */
 export function sessionsForVideo(video, sessions) {
-  if (!video || !Array.isArray(sessions) || sessions.length === 0) return []
-  return rankSessions(sessions.filter((session) => isSameTitle(video, session)))
+  if (!video) return []
+  return sessionsOnTitle(sessions, video)
 }
 
 /**

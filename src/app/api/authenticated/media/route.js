@@ -8,6 +8,8 @@ import {
 } from '@src/utils/flatDatabaseUtils'
 import { playableSeasons } from '@src/utils/media/tvFacts'
 import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
+import { findOwnLiveSessions, watchingNowFor } from '@src/utils/playbackPresence/personal'
+import { sessionsOnTitle } from '@src/utils/playbackPresence/session'
 import { applyJitPreference } from '@src/utils/jit/preference'
 import { limitResponseCast } from '@src/utils/media/responseCast'
 
@@ -135,6 +137,20 @@ export async function GET(req) {
       }
     }
 
+    // The caller's own live sessions on this title, show or season, under the
+    // same gate as watchHistory (plans/media-activity-presence.md). Absent,
+    // not empty, when they could not be read: an empty list would say "not
+    // watching", which nobody checked.
+    let ownSessions = null
+    if (includeWatchHistory && authResult.id) {
+      try {
+        ownSessions = await findOwnLiveSessions(authResult.id)
+        media = { ...media, watchingNow: watchingNowFor(media, ownSessions) }
+      } catch (presenceError) {
+        console.warn('Failed to add live sessions to media:', presenceError.message)
+      }
+    }
+
     // React Native TV Device Handling
     if (isTVdevice) {
       try {
@@ -202,6 +218,13 @@ export async function GET(req) {
                       console.warn('Failed to add watch history to episodes:', watchHistoryError.message)
                       // Continue with episodes without watch history
                     }
+                  }
+                  // Each episode's own live sessions, from the same read
+                  if (ownSessions) {
+                    episodesWithHistory = episodesWithHistory.map((episode) => ({
+                      ...episode,
+                      watchingNow: sessionsOnTitle(ownSessions, episode),
+                    }))
                   }
 
                   // Merge the episode data and full show context

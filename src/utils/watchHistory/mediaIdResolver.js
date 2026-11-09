@@ -30,16 +30,19 @@ const MAX_ENTRIES = 500
 
 /**
  * nid -> { mediaId: string|null, mediaType: 'movie'|'tv'|null, durationMs: number|null,
- *          showId: ObjectId|null, expiresAt }
+ *          showId: ObjectId|null, seasonNumber: number|null, episodeNumber: number|null,
+ *          expiresAt }
  */
 const cache = new Map()
 
 /**
  * @param {string} normalizedVideoId
- * @returns {Promise<{ mediaId: string, mediaType: 'movie'|'tv', durationMs: number|null, showId: ObjectId|null } | null>}
+ * @returns {Promise<{ mediaId: string, mediaType: 'movie'|'tv', durationMs: number|null, showId: ObjectId|null,
+ *   seasonNumber: number|null, episodeNumber: number|null } | null>}
  *   `durationMs` is the catalog runtime, carried along so callers that hold a
- *   position can compute completion without a second lookup. `showId` is the
- *   episode's catalog show (FlatEpisodes.showId); null for a movie.
+ *   position can compute completion without a second lookup. `showId`,
+ *   `seasonNumber` and `episodeNumber` place an episode in its catalog show
+ *   (FlatEpisodes); all null for a movie.
  */
 export async function resolveMediaIdForNid(normalizedVideoId) {
   if (!normalizedVideoId) return null
@@ -52,11 +55,14 @@ export async function resolveMediaIdForNid(normalizedVideoId) {
           mediaType: cached.mediaType,
           durationMs: cached.durationMs ?? null,
           showId: cached.showId ?? null,
+          seasonNumber: cached.seasonNumber ?? null,
+          episodeNumber: cached.episodeNumber ?? null,
         }
       : null
   }
 
   const durationOf = (doc) => (Number.isFinite(doc?.duration) && doc.duration > 0 ? doc.duration : null)
+  const wholeNumber = (value) => (Number.isInteger(value) ? value : null)
 
   let result = null
   try {
@@ -67,17 +73,29 @@ export async function resolveMediaIdForNid(normalizedVideoId) {
       .collection('FlatMovies')
       .findOne({ normalizedVideoId }, { projection: { mediaId: 1, duration: 1 } })
     if (movie?.mediaId) {
-      result = { mediaId: movie.mediaId, mediaType: 'movie', durationMs: durationOf(movie), showId: null }
+      result = {
+        mediaId: movie.mediaId,
+        mediaType: 'movie',
+        durationMs: durationOf(movie),
+        showId: null,
+        seasonNumber: null,
+        episodeNumber: null,
+      }
     } else {
       const episode = await db
         .collection('FlatEpisodes')
-        .findOne({ normalizedVideoId }, { projection: { mediaId: 1, duration: 1, showId: 1 } })
+        .findOne(
+          { normalizedVideoId },
+          { projection: { mediaId: 1, duration: 1, showId: 1, seasonNumber: 1, episodeNumber: 1 } }
+        )
       if (episode?.mediaId) {
         result = {
           mediaId: episode.mediaId,
           mediaType: 'tv',
           durationMs: durationOf(episode),
           showId: episode.showId ?? null,
+          seasonNumber: wholeNumber(episode.seasonNumber),
+          episodeNumber: wholeNumber(episode.episodeNumber),
         }
       }
     }
@@ -95,6 +113,8 @@ export async function resolveMediaIdForNid(normalizedVideoId) {
     mediaType: result?.mediaType ?? null,
     durationMs: result?.durationMs ?? null,
     showId: result?.showId ?? null,
+    seasonNumber: result?.seasonNumber ?? null,
+    episodeNumber: result?.episodeNumber ?? null,
     expiresAt: Date.now() + (result ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS),
   })
 

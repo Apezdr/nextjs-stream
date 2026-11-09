@@ -415,6 +415,8 @@ export function sanitizeCardData(item, popup = false, context = {}) {
     // Already-joined watch history (the media route joins before this card
     // branch; the horizontal-list route joins after it, so this is a no-op there).
     if (item.watchHistory && typeof item.watchHistory === 'object') sanitized.watchHistory = item.watchHistory
+    // The caller's own live sessions, joined by the media route beside watchHistory
+    if (Array.isArray(item.watchingNow)) sanitized.watchingNow = item.watchingNow
     if (finalTitle) sanitized.title = finalTitle
     if (posterURL) sanitized.posterURL = posterURL
     if (type) sanitized.type = type
@@ -752,6 +754,11 @@ export function sanitizeTVData(media, options = {}) {
       // Add watch history data if available
       tvData.watchHistory = media.watchHistory
     }
+    // The caller's own live sessions on this title, show or season (absent
+    // when not requested or not readable; see playbackPresence/personal.js)
+    if (Array.isArray(media.watchingNow)) {
+      tvData.watchingNow = media.watchingNow
+    }
     // Why the serve layer kept the raw file (absent on a JIT swap). The TV
     // app can say "Original unavailable, raw file served" only with this.
     if (media.jitSkipReason) {
@@ -828,7 +835,8 @@ export function sanitizeTVData(media, options = {}) {
           mediaId: episode.mediaId || null,
           playbackSource: episode.playbackSource || null,
           rawVideoURL: episode.rawVideoURL || null,
-          watchHistory: episode.watchHistory || null
+          watchHistory: episode.watchHistory || null,
+          ...(Array.isArray(episode.watchingNow) && { watchingNow: episode.watchingNow }),
         }))
       }
 
