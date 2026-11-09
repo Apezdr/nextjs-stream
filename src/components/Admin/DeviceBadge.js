@@ -17,6 +17,27 @@ import {
 } from '@src/utils/deviceDetection'
 import Image from 'next/image'
 
+/** The cast glyph, drawn like the outline Heroicons beside it (Heroicons has none). */
+function CastIcon(props) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M3 8V6.75C3 5.784 3.784 5 4.75 5h14.5c.966 0 1.75.784 1.75 1.75v10.5c0 .966-.784 1.75-1.75 1.75H14" />
+      <path d="M3 12a7 7 0 0 1 7 7" />
+      <path d="M3 15.5a3.5 3.5 0 0 1 3.5 3.5" />
+      <path d="M3.01 19H3" />
+    </svg>
+  )
+}
+
 const deviceConfig = {
   tv: {
     label: 'TV',
@@ -45,6 +66,15 @@ const deviceConfig = {
     bgColor: 'bg-orange-100',
     textColor: 'text-orange-800',
     borderColor: 'border-orange-200'
+  },
+  // A cast's live session (presence only; history rows name the receiver's TV)
+  cast: {
+    label: 'Cast',
+    tooltipName: 'a Cast device',
+    icon: CastIcon,
+    bgColor: 'bg-teal-100',
+    textColor: 'text-teal-800',
+    borderColor: 'border-teal-200'
   }
 }
 
@@ -75,7 +105,7 @@ const DeviceBadge = memo(function DeviceBadge({
 
   // Create detailed tooltip text
   const getTooltipContent = () => {
-    const baseText = `Last watched on ${config.label}`
+    const baseText = `Last watched on ${config.tooltipName ?? config.label}`
     
     if (deviceType === 'tv' && tvManufacturerLabel) {
       return `${baseText} (${tvManufacturerLabel})`

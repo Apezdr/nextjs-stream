@@ -2,8 +2,9 @@
  * Cast Playback Token (CPT)
  *
  * A short-lived capability that lets a Cast receiver — a television we do not
- * control, on the far side of a Cast channel — write back exactly one thing:
- * the resume position of one title, for one user.
+ * control, on the far side of a Cast channel — write back about exactly one
+ * title, for one user: its resume position, and whether it is playing right
+ * now (the cast's presence row).
  *
  * Why a new token instead of reusing what exists:
  *
@@ -18,7 +19,9 @@
  *    cannot key a WatchHistory row at all.
  *
  * The whole authority granted here is "set this user's position for this title,
- * for at most 24 hours". It reads nothing. The scope is what makes shipping it
+ * and say this title is playing on a cast device, for at most 24 hours". It
+ * reads nothing, and the presence rows it writes are namespaced to casts, so it
+ * cannot touch the user's other sessions. The scope is what makes shipping it
  * through a television acceptable.
  *
  * Only node:crypto is imported, deliberately: this module must stay outside the

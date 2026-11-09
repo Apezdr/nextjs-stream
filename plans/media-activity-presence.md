@@ -20,7 +20,7 @@ Keyed `{ userId, sessionId }` (unique index `userId_sessionId_unique`). A user o
 ```js
 {
   userId: ObjectId,
-  sessionId: string,          // web and TV app: client UUID per player mount; cast: the receiver's castSessionId
+  sessionId: string,          // web and TV app: client UUID per player mount; cast: 'cast:' + the receiver's castSessionId
   videoId: string,            // the URL the client played
   normalizedVideoId: string,  // computed at write time
   mediaId: string,            // server-resolved (resolveMediaIdForNid); never client-sent
@@ -30,7 +30,7 @@ Keyed `{ userId, sessionId }` (unique index `userId_sessionId_unique`). A user o
   state: 'playing' | 'paused',  // replaces isPaused
   playbackTime: number,       // seconds; written only by heartbeats that carry a position
   positionAt: Date,           // when playbackTime was written
-  deviceInfo: { type, userAgent, ... },  // cast rows: type 'cast'
+  deviceInfo: { type, userAgent, ... },  // cast rows: { type: 'cast' } only
   ipAddress, localIp,
   lastHeartbeat: Date,
   staleAfter: Date,           // the row's own answer to "is this still live"
@@ -55,8 +55,7 @@ The server writes `staleAfter` on every heartbeat from one contract, kept in one
   |---|---|---|
   | Web player (`WithPlaybackTracker`) | ~1 s | 180 s |
   | TV / mobile app (`usePlaybackPresenceTracking`) | 30 s | 180 s |
-  | Cast receiver, no sender connected (`playback-reporter.js`) | 15–20 s | 120 s |
-  | Cast sender page (`CastPositionMirror`) | 15 s | 15 s |
+  | Cast receiver, sender connected or not (`playback-reporter.js`) | 15–20 s | 120–125 s |
 
 - **Drift is logged.** When a heartbeat arrives for a row already past its `staleAfter`, the write logs a warning with the session id, device type, state and gap (`findOneAndUpdate`, `returnDocument: 'before'`). The 30 s change went unnoticed for two months; this would have caught it on the first day.
 - Rows written before the deploy have no `staleAfter` and are not live (fail closed). Every active session rewrites its row within one heartbeat.
@@ -78,13 +77,17 @@ The footgun still applies: a client must never send a heartbeat carrying a `sess
 
 ### Cast
 
-One cast is one row, whichever side is reporting:
+One cast is one row, and the receiver is its only writer (built 2026-11-09, step 2):
 
-- The receiver already mints a `castSessionId` per loaded title. It publishes it to senders in its media-status `customData`, next to `nowPlaying` (`public/receiver/js/now-playing.js`).
-- **Receiver reporting** (no sender connected): `/api/cast/playback` writes presence for `{ userId: claims.u, sessionId: castSessionId }` with device type `cast`.
-- **Sender reporting** (sender connected): `CastPositionMirror` sends the receiver's `castSessionId` as `sessionId`. The `cast-mirror` branch of `updatePlayback` writes presence for that same row, with device type `cast` and never the sender's own user agent.
-- **Ending:** the receiver's final reports (`REQUEST_STOP`, `MEDIA_FINISHED`, `SHUTDOWN`) gain `final: true` in the body, and the route ends the row. When a new title or token loads over the top, the receiver ends the outgoing row, using the outgoing token, before arming the new one.
-- The hand-off between the two sides fits the contract: the sender leaves, then a 5 s grace period plus the receiver's 5 s tick and 15 s interval stay under 60 s.
+- **The row.** The receiver mints a `castSessionId` per loaded title (`public/receiver/js/playback-reporter.js`). `/api/cast/playback` writes `{ userId: claims.u, sessionId: 'cast:' + castSessionId }` with device `{ type: 'cast' }`, never the receiver's user agent. The `cast:` namespace means a cast token can only ever touch cast rows, never the same user's web or TV-app sessions; an id the receiver could not have minted writes no presence.
+- **Sender or not.** The receiver reports while a sender is connected too. The sender's `CastPositionMirror` owns the position then, so those reports carry `presenceOnly: true` and the route writes presence only. The mirror writes no presence: a sender tab in the background has its timers throttled to about once a minute, which is no cadence for a 60 s expiry, and a second person's sender connected to the same cast would write it to their own account. The receiver's token names whose cast it is.
+- **Idle reports nothing.** A finished title, a stop or a load in progress sends no ordinary report, so a finished title never reads as playing.
+- **Ending.** The final reports (`REQUEST_STOP`, `MEDIA_FINISHED`, `SHUTDOWN`) carry `final: true`; the route saves the position when there is one worth saving and ends the row. A final report with no position is allowed, only to end the row. When another title or person loads over the top, the receiver ends the outgoing row with the outgoing token. A final report gets no rolled token.
+- **The previous token never comes back.** A response acts on the receiver's snapshot only while it still holds the token the request carried. Before this, a late token refresh for the previous title could be adopted after a new person's title loaded, recording their viewing against the previous person. And a load is told apart by the token it carried, not the rolled one in use: before, any status change after a roll (11 h into a cast) read as a new load and reverted to the original, expired token.
+- **Rate limit.** `/api/cast/playback` is limited per IP, which a household's TVs share. Receivers now report while a sender is connected too (~240 an hour while playing), so the limit went from 600 to 1200 an hour.
+- **The web tracker** ends its own row when a receiver adopts its title (step 1).
+
+A receiver loaded before the deploy keeps running the old script until it relaunches: it reports presence only while no sender is connected, and its stop is not marked `final`, so the row expires (at most 60 s) instead of ending.
 
 ## One reader, one shape, one tie-break rule
 
@@ -144,7 +147,7 @@ Each step ships on its own and comes with tests.
    - Update `media-activity-api.md` and the integration doc's windows section.
 
    This alone fixes the TV blinking and the "Paused" flips on the admin overview, the desktop widget and the transcoder sessions view.
-2. **Cast presence:** the receiver publishes and ends `castSessionId`; `/api/cast/playback` and the `cast-mirror` branch write the shared row; `DeviceBadge` learns `cast`.
+2. **Cast presence** (built 2026-11-09): the receiver writes and ends the cast's row, sender or not; `/api/cast/playback` takes `presenceOnly` and `final`; `DeviceBadge` and `getDeviceTypeLabel` learn `cast`. The original plan had the sender's mirror write the row while connected; dropped for the background-tab throttling and second-sender reasons above.
 3. **Personal API:** `GET /api/authenticated/presence` and `watchingNow` on `/api/authenticated/media`.
 4. **Media-page UI on web, plus the TV app hand-off doc**, shipped together.
 

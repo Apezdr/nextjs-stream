@@ -71,7 +71,10 @@ export const POST = async (req) => {
     //     ordering guard unconditionally the moment the tab closes — including
     //     a legitimate rewind on the TV remote. A 'client' stamp would lock
     //     them out for a minute.
-    //   - no presence heartbeat: mirroring is not a viewing session.
+    //   - no presence heartbeat: the receiver writes the cast's presence row
+    //     itself, sender or not (public/receiver/js/playback-reporter.js). A
+    //     background tab's timers are throttled to about once a minute, which
+    //     is no cadence for "watching now".
     if (source === 'cast-mirror') {
       const applied = await upsertPlaybackFromCast({
         userId: new ObjectId(authResult.id),

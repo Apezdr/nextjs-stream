@@ -11,11 +11,10 @@
  *
  * Two rules do most of the work:
  *
- *  - Exactly one writer at a time. While any sender is connected, the sender is
- *    reporting already (the Cast provider re-dispatches the receiver's
- *    CURRENT_TIME_CHANGED as a local timeupdate, so the web player's tracker
- *    keeps writing throughout a session). This module stays silent until the
- *    last sender leaves, then takes over. No coordination channel needed.
+ *  - Exactly one writer of the position at a time. While any sender is
+ *    connected, the sender is reporting it already (its CastPositionMirror).
+ *    This module leaves the position alone until the last sender leaves, then
+ *    takes over. No coordination channel needed.
  *
  *  - Never queue, never retry. A failed report is dropped; the next tick reads
  *    a fresh position. A retry queue would eventually deliver a position the
@@ -26,6 +25,17 @@
  * (see src/lib/castPlaybackToken.ts), delivered in the LOAD request's
  * customData. No token means no reporting — which is exactly what happens for a
  * signed-out or unapproved sender, so guest casting works and records nothing.
+ *
+ * Presence ("watching now") is different: the receiver is its only writer,
+ * sender or not, because the screen that plays is the one that knows it is
+ * playing. A sender tab left in the background gets its timers throttled to
+ * about once a minute, and a second person's sender would write it to their own
+ * account. While a sender is connected each report is `presenceOnly`: the
+ * server keeps the cast's presence row live and leaves the position to the
+ * sender. The row is keyed by a castSessionId minted per loaded title. A report
+ * marked `final` ends it: the stop, the end of the title, shutdown, and another
+ * title or person loading over the top. An idle player reports nothing, or a
+ * finished title would read as still playing.
  */
 
 const REPORT_URL = '/api/cast/playback'
@@ -101,7 +111,7 @@ export function startPlaybackReporter({ context, playerManager, castDebugLogger,
    * rather than captured once, because STREAM_TRANSFER is enabled: a second
    * person in the house can load over the top of the current item at any time.
    */
-  const snapshot = { token: null, videoId: null, castSessionId: null }
+  const snapshot = { token: null, loadedToken: null, videoId: null, castSessionId: null }
 
   /** Set when the server rejects our credential; cleared by the next load. */
   let disabled = false
@@ -140,6 +150,11 @@ export function startPlaybackReporter({ context, playerManager, castDebugLogger,
    * important line in the file: without it, one person casts with a token, a
    * second person later casts signed-out, and the second person's viewing is
    * recorded against the first person's account.
+   *
+   * A load is told apart by the token it CARRIED (loadedToken), not the token
+   * in use, which the server may have rolled since. Comparing against the
+   * rolled one would read any later status change as a new load: ending the
+   * cast's presence row, and reverting to the original token, expired by then.
    */
   function refreshSnapshot() {
     let media = null
@@ -153,9 +168,27 @@ export function startPlaybackReporter({ context, playerManager, castDebugLogger,
     const token = typeof custom.castToken === 'string' && custom.castToken ? custom.castToken : null
     const videoId = media?.contentUrl || media?.contentId || null
 
-    const changed = token !== snapshot.token || videoId !== snapshot.videoId
-    snapshot.token = token
-    snapshot.videoId = videoId
+    const changed = token !== snapshot.loadedToken || videoId !== snapshot.videoId
+    // The outgoing cast's presence ends here, with the outgoing token: it may be
+    // someone else's. MEDIA_FINISHED usually ended it already; ending twice is
+    // harmless, a row left behind would read as a second session for a minute.
+    if (changed && !disabled && snapshot.token && snapshot.videoId && snapshot.castSessionId) {
+      send(
+        {
+          token: snapshot.token,
+          videoId: snapshot.videoId,
+          castSessionId: snapshot.castSessionId,
+          final: true,
+          sentAt: Date.now(),
+        },
+        { final: true }
+      )
+    }
+    if (changed) {
+      snapshot.token = token
+      snapshot.loadedToken = token
+      snapshot.videoId = videoId
+    }
     if (changed || !snapshot.castSessionId) snapshot.castSessionId = newCastSessionId()
 
     disabled = false
@@ -171,48 +204,36 @@ export function startPlaybackReporter({ context, playerManager, castDebugLogger,
     }
   }
 
-  /**
-   * Send one report.
-   *
-   * @param {Object} [options]
-   * @param {boolean} [options.final] bypasses the sender gate and the interval,
-   *   and goes out via sendBeacon so it survives the page being torn down
-   * @param {number} [options.positionOverride] for events that carry a more
-   *   accurate position than the player will still have by the time we ask
-   */
-  function report({ final = false, positionOverride = null } = {}) {
-    if (disabled || !snapshot.token || !snapshot.videoId) return
-    // While a sender is connected it is doing the reporting. A final report is
-    // exempt: by then the session is ending and this is the last word.
-    if (!final && (senderConnected() || Date.now() < quietUntil)) return
-
-    let position = positionOverride
-    if (position === null || position === undefined) {
-      try {
-        position = playerManager.getCurrentTimeSec()
-      } catch {
-        return
-      }
+  /** Nothing playing or paused: a title finished, stopped, or still loading. */
+  function currentlyIdle() {
+    try {
+      return playerManager.getPlayerState() === cast.framework.messages.PlayerState.IDLE
+    } catch {
+      return false
     }
-    if (!Number.isFinite(position) || position <= MIN_POSITION_S) return
+  }
 
-    lastReportAt = Date.now()
-
-    const body = JSON.stringify({
-      token: snapshot.token,
-      videoId: snapshot.videoId,
-      playbackTime: position,
-      isPaused: currentlyPaused(),
-      castSessionId: snapshot.castSessionId,
-      sentAt: Date.now(),
-    })
+  /**
+   * Post one report body.
+   *
+   * A response only ever acts on the snapshot while the snapshot still holds
+   * the token the request carried. Another title, or another person, can load
+   * in between; adopting the old token's refresh then would record the new
+   * viewing against the previous person's account.
+   *
+   * @param {Object} body
+   * @param {Object} [options]
+   * @param {boolean} [options.final] goes out via sendBeacon, so it survives
+   *   the page being torn down
+   */
+  function send(body, { final = false } = {}) {
+    const payload = JSON.stringify(body)
 
     // A shutdown gives no time for a promise to settle; sendBeacon hands the
     // request to the browser and returns.
     if (final && typeof navigator !== 'undefined' && navigator.sendBeacon) {
       try {
-        navigator.sendBeacon(REPORT_URL, new Blob([body], { type: 'application/json' }))
-        return
+        if (navigator.sendBeacon(REPORT_URL, new Blob([payload], { type: 'application/json' }))) return
       } catch {
         /* fall through to fetch */
       }
@@ -223,26 +244,31 @@ export function startPlaybackReporter({ context, playerManager, castDebugLogger,
     // ever be able to stand in for the token.
     fetch(REPORT_URL, {
       method: 'POST',
-      body,
+      body: payload,
       credentials: 'omit',
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       keepalive: final,
     })
       .then((res) => {
+        const current = body.token === snapshot.token
         if (res.status === 401 || res.status === 403) {
           // The credential is bad or out of scope, and no amount of retrying
           // fixes either. Stop until the next load hands us a new one.
-          disabled = true
-          log(`disabled by server: ${res.status}`)
+          if (current) {
+            disabled = true
+            log(`disabled by server: ${res.status}`)
+          }
           return null
         }
-        return res.ok ? res.json() : null
+        return res.ok && current ? res.json() : null
       })
       .then((data) => {
         // The server rolls the token when it nears expiry, so a long evening
         // keeps reporting without a long-lived credential ever being issued.
-        if (data && typeof data.token === 'string') snapshot.token = data.token
+        if (data && typeof data.token === 'string' && body.token === snapshot.token) {
+          snapshot.token = data.token
+        }
       })
       .catch(() => {
         // Dropped deliberately. The next tick carries a fresher position than a
@@ -250,9 +276,59 @@ export function startPlaybackReporter({ context, playerManager, castDebugLogger,
       })
   }
 
+  /**
+   * Send one report.
+   *
+   * While a sender is connected (or during the grace period after the last
+   * one leaves) the report is presence-only: the sender owns the position.
+   *
+   * @param {Object} [options]
+   * @param {boolean} [options.final] bypasses the sender gate and the interval,
+   *   goes out via sendBeacon so it survives the page being torn down, and
+   *   ends the cast's presence
+   * @param {number} [options.positionOverride] for events that carry a more
+   *   accurate position than the player will still have by the time we ask
+   */
+  function report({ final = false, positionOverride = null } = {}) {
+    if (disabled || !snapshot.token || !snapshot.videoId) return
+    // An idle player is not watching anything: reporting from it would keep a
+    // finished title live, and its position says nothing new.
+    if (!final && currentlyIdle()) return
+    // While a sender is connected it reports the position. A final report is
+    // exempt: by then the session is ending and this is the last word.
+    const presenceOnly = !final && (senderConnected() || Date.now() < quietUntil)
+
+    let position = positionOverride
+    if (position === null || position === undefined) {
+      try {
+        position = playerManager.getCurrentTimeSec()
+      } catch {
+        position = null
+      }
+    }
+    const hasPosition = Number.isFinite(position) && position > MIN_POSITION_S
+    // Nothing worth saving: an ordinary report says nothing at all, but a final
+    // one still goes, without a position, because it ends the cast's presence.
+    if (!hasPosition && !final) return
+
+    lastReportAt = Date.now()
+
+    send(
+      {
+        token: snapshot.token,
+        videoId: snapshot.videoId,
+        ...(hasPosition && { playbackTime: position, isPaused: currentlyPaused() }),
+        castSessionId: snapshot.castSessionId,
+        ...(presenceOnly && { presenceOnly: true }),
+        ...(final && { final: true }),
+        sentAt: Date.now(),
+      },
+      { final }
+    )
+  }
+
   function tick() {
     if (disabled || !snapshot.token) return
-    if (senderConnected() || Date.now() < quietUntil) return
     const interval = currentlyPaused() ? REPORT_INTERVAL_PAUSED_MS : REPORT_INTERVAL_PLAYING_MS
     if (Date.now() - lastReportAt < interval) return
     report()

@@ -8,8 +8,10 @@ import { UAParser } from 'ua-parser-js'
  */
 
 /**
- * Device type as used throughout the application
- * @typedef {'tv' | 'mobile' | 'tablet' | 'desktop'} DeviceType
+ * Device type as used throughout the application. detectDeviceType never
+ * returns 'cast': only a cast's presence row carries it, whatever the
+ * receiver's user agent says (src/app/api/cast/playback/route.js).
+ * @typedef {'tv' | 'mobile' | 'tablet' | 'desktop' | 'cast'} DeviceType
  */
 
 /**
@@ -221,7 +223,8 @@ export function getDeviceTypeLabel(deviceType) {
     'tv': 'TV',
     'mobile': 'Mobile',
     'tablet': 'Tablet',
-    'desktop': 'Desktop'
+    'desktop': 'Desktop',
+    'cast': 'Cast'
   }
   
   return labels[deviceType] || 'Unknown'

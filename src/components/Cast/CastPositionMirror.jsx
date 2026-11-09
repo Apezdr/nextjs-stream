@@ -9,9 +9,11 @@ import { getRemote, readFinalRemotePosition } from './castSdk'
  * Reports the receiver's position while a Cast session is live.
  *
  * This closes the zero-writer gap: during a session the receiver's own
- * reporter stands down (a sender is connected), and the page's tracker stands
- * down (it is mirroring, not playing) — so nothing anywhere recorded progress,
- * and every restore source in the app froze at the moment casting started.
+ * reporter leaves the position alone (a sender is connected; it reports only
+ * the cast's presence, which is why nothing here does), and the page's
+ * tracker stands down (it is mirroring, not playing) — so nothing anywhere
+ * recorded progress, and every restore source in the app froze at the moment
+ * casting started.
  * Stopping a cast then "rewound" to that frozen position, and Continue
  * Watching sat still for the whole session.
  *
