@@ -44,16 +44,18 @@ const historyCollection = {
 const presenceCollection = {
   createIndex: jest.fn(async () => {}),
   findOne: jest.fn(async (filter) => (matches(presence, filter) ? presence : null)),
-  updateOne: jest.fn(async (filter, update, options = {}) => {
+  // Shaped like the driver's includeResultMetadata result.
+  findOneAndUpdate: jest.fn(async (filter, update, options = {}) => {
     if (matches(presence, filter)) {
+      const before = presence
       presence = { ...presence, ...update.$set }
-      return { matchedCount: 1, modifiedCount: 1 }
+      return { value: before, lastErrorObject: { n: 1, updatedExisting: true }, ok: 1 }
     }
     if (options.upsert) {
       presence = { userId: filter.userId, sessionId: filter.sessionId, ...update.$set }
-      return { matchedCount: 0, upsertedCount: 1 }
+      return { value: null, lastErrorObject: { n: 1, updatedExisting: false }, ok: 1 }
     }
-    return { matchedCount: 0, modifiedCount: 0 }
+    return { value: null, lastErrorObject: { n: 0, updatedExisting: false }, ok: 1 }
   }),
   deleteOne: jest.fn(async () => ({ deletedCount: 1 })),
 }
@@ -165,7 +167,7 @@ describe('the start threshold', () => {
 
     expect(res.status).toBe(200)
     expect(history).toBeNull()
-    expect(presence).toMatchObject({ sessionId: 'tv', playbackTime: 6.5, isPaused: true })
+    expect(presence).toMatchObject({ sessionId: 'tv', playbackTime: 6.5, state: 'paused' })
     expect(writeLog().outcome).toBe('held')
   })
 

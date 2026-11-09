@@ -44,16 +44,18 @@ const historyCollection = {
 const presenceCollection = {
   createIndex: jest.fn(async () => {}),
   findOne: jest.fn(async (filter) => (matches(presence, filter) ? presence : null)),
-  updateOne: jest.fn(async (filter, update, options = {}) => {
+  // Shaped like the driver's includeResultMetadata result.
+  findOneAndUpdate: jest.fn(async (filter, update, options = {}) => {
     if (matches(presence, filter)) {
+      const before = presence
       presence = { ...presence, ...update.$set }
-      return { matchedCount: 1, modifiedCount: 1 }
+      return { value: before, lastErrorObject: { n: 1, updatedExisting: true }, ok: 1 }
     }
     if (options.upsert) {
       presence = { userId: filter.userId, sessionId: filter.sessionId, ...update.$set }
-      return { matchedCount: 0, upsertedCount: 1 }
+      return { value: null, lastErrorObject: { n: 1, updatedExisting: false }, ok: 1 }
     }
-    return { matchedCount: 0, modifiedCount: 0 }
+    return { value: null, lastErrorObject: { n: 0, updatedExisting: false }, ok: 1 }
   }),
   deleteOne: jest.fn(async () => ({ deletedCount: 1 })),
 }
@@ -241,7 +243,7 @@ describe('POST /api/authenticated/sync/updatePlayback', () => {
     expect(body.kind).toBe('keepalive')
     expect(history.playbackTime).toBe(1500)
     expect(presence.playbackTime).toBe(1500)
-    expect(presence.isPaused).toBe(true)
+    expect(presence.state).toBe('paused')
     expect(invalidate).not.toHaveBeenCalled()
   })
 

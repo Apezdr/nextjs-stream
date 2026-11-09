@@ -2,11 +2,9 @@ import clientPromise from '@src/lib/mongodb'
 import { userQueries } from '@src/lib/userQueries'
 import { validateWebhookId } from '@src/utils/webhookServer'
 import { recordKeyCaller } from '@src/lib/requestCaller'
-import { detectBrowserType, getDeviceTypeLabel } from '@src/utils/deviceDetection'
-import { DEFAULT_ACTIVE_WINDOW_SECONDS, PAUSED_WINDOW_SECONDS } from '@src/utils/playbackPresence/database'
-import { UAParser } from 'ua-parser-js'
+import { findLiveSessions } from '@src/utils/playbackPresence/live'
+import { livePosition } from '@src/utils/playbackPresence/session'
 
-const MAX_ACTIVE_WINDOW_SECONDS = 300
 const DEFAULT_LIMIT = 10
 const LOOKUP_TIMEOUT_MS = 3000
 
@@ -238,61 +236,29 @@ function resolvePosterUrl(appOrigin, posterURL, posterPath, fallback = '') {
 }
 
 /**
- * Builds a human-friendly device descriptor for the <Player> element from the
- * stored deviceInfo — using the same user-agent the admin activity panel uses for
- * its device/browser icons — so the widget shows e.g. "Chrome · Desktop" with
- * platform "Windows" instead of just "desktop".
+ * One widget row from a LiveSession (playbackPresence/session.js). The device
+ * reads e.g. "Chrome · Desktop" with platform "Windows", the same wording as
+ * every other presence surface.
  */
-export function getDeviceDescriptor(deviceInfo) {
-  const typeLabel = getDeviceTypeLabel(deviceInfo?.type)
-  const userAgent = deviceInfo?.userAgent || ''
-
-  let browser = ''
-  let os = ''
-  if (userAgent) {
-    const detected = detectBrowserType(userAgent)
-    if (detected && detected !== 'unknown') {
-      browser = detected.charAt(0).toUpperCase() + detected.slice(1)
-    }
-    try {
-      os = new UAParser(userAgent).getOS()?.name || ''
-    } catch {
-      os = ''
-    }
-  }
-
-  const hasType = typeLabel && typeLabel !== 'Unknown'
-  const title = browser
-    ? (hasType ? `${browser} · ${typeLabel}` : browser)
-    : (hasType ? typeLabel : (deviceInfo?.type || 'Unknown'))
-
-  return {
-    title,
-    platform: os || (hasType ? typeLabel : (deviceInfo?.type || '')),
-    product: 'NextJS Stream',
-  }
-}
-
-function normalizeSession(entry, index, userMap, mediaMaps, appOrigin) {
+function normalizeSession(entry, index, userMap, mediaMaps, appOrigin, nowMs) {
   const movie = mediaMaps.movieMap.get(entry.normalizedVideoId) || mediaMaps.movieMap.get(entry.videoId)
   const tv = mediaMaps.tvMap.get(entry.normalizedVideoId) || mediaMaps.tvMap.get(entry.videoId)
   const user = userMap.get(String(entry.userId))
-  const device = getDeviceDescriptor(entry.deviceInfo)
   // Player/network fields shared by every session shape below.
   const player = {
-    playerTitle: device.title,
-    product: device.product,
-    platform: device.platform,
+    playerTitle: entry.device.label,
+    product: 'NextJS Stream',
+    platform: entry.device.platform,
     address: entry.ipAddress || '',
     localAddress: entry.localIp || '',
   }
-  const playbackMs = Math.max(0, Math.round((entry.playbackTime || 0) * 1000))
-  const state = entry.isPaused ? 'paused' : 'playing'
+  const playbackMs = Math.max(0, Math.round((livePosition(entry, nowMs) || 0) * 1000))
+  const state = entry.state
 
   if (movie) {
     return {
-      id: `${String(entry._id)}`,
-      key: `/metadata/${String(entry._id)}`,
+      id: entry.id,
+      key: `/metadata/${entry.id}`,
       type: 'movie',
       title: movie.title || movie.originalTitle || getTitleFromVideoId(entry.videoId),
       grandparentTitle: '',
@@ -323,8 +289,8 @@ function normalizeSession(entry, index, userMap, mediaMaps, appOrigin) {
     const episodeNumber = entry.episodeNumber || episode.episodeNumber || ''
     const show = findShowForEpisode(mediaMaps.showPosterMap, episode)
     return {
-      id: `${String(entry._id)}`,
-      key: `/metadata/${String(entry._id)}`,
+      id: entry.id,
+      key: `/metadata/${entry.id}`,
       type: 'episode',
       title: episode.title || getTitleFromVideoId(entry.videoId),
       grandparentTitle: show?.title || episode.showTitle || episode.originalTitle || 'Unknown Show',
@@ -357,8 +323,8 @@ function normalizeSession(entry, index, userMap, mediaMaps, appOrigin) {
   }
 
   return {
-    id: `${String(entry._id)}`,
-    key: `/metadata/${String(entry._id)}`,
+    id: entry.id,
+    key: `/metadata/${entry.id}`,
     type: entry.mediaType === 'tv' ? 'episode' : 'movie',
     title: getTitleFromVideoId(entry.videoId),
     grandparentTitle: '',
@@ -383,39 +349,24 @@ function normalizeSession(entry, index, userMap, mediaMaps, appOrigin) {
   }
 }
 
+/**
+ * Rows in the order their sessions started. A row id is a Mongo ObjectId,
+ * whose hex form sorts by creation time, and it never changes, so pause and
+ * resume cannot reorder the widget's rows; new sessions append at the end.
+ */
+function byStarted(a, b) {
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
 export async function getActiveMediaSessions(request) {
-  const emptyPayload = buildEmptyMediaActivityPayload(request)
   const url = new URL(request.url)
   const appOrigin = url.origin
-  const activeWindowSeconds = clampNumber(
-    url.searchParams.get('activeWindowSeconds'),
-    DEFAULT_ACTIVE_WINDOW_SECONDS,
-    1,
-    MAX_ACTIVE_WINDOW_SECONDS
-  )
   const limit = clampNumber(url.searchParams.get('limit'), DEFAULT_LIMIT, 1, DEFAULT_LIMIT)
-  const activeSince = new Date(Date.now() - activeWindowSeconds * 1000)
-  const pausedSince = new Date(Date.now() - PAUSED_WINDOW_SECONDS * 1000)
 
-  const client = await clientPromise
-  const entries = await client
-    .db('Media')
-    .collection('PlaybackPresence')
-    .find({
-      $or: [
-        { isPaused: { $ne: true }, lastHeartbeat: { $gte: activeSince } },
-        { isPaused: true, lastHeartbeat: { $gte: pausedSince } },
-      ],
-    })
-    // Keep each session in its original row while heartbeats update
-    // `lastHeartbeat`. MongoDB `_id` is immutable, so pause/resume cannot
-    // reorder existing sessions; newly-created sessions append chronologically.
-    .sort({ _id: 1 })
-    .limit(limit)
-    .toArray()
+  const entries = (await findLiveSessions()).sort(byStarted).slice(0, limit)
 
   if (entries.length === 0) {
-    return emptyPayload
+    return buildEmptyMediaActivityPayload()
   }
 
   const userIds = [...new Set(entries.map((entry) => entry.userId).filter(Boolean))]
@@ -430,13 +381,13 @@ export async function getActiveMediaSessions(request) {
   ])
 
   const userMap = new Map(users.map((user) => [String(user._id), user]))
+  const nowMs = Date.now()
   const sessions = entries.map((entry, index) =>
-    normalizeSession(entry, index, userMap, mediaMaps, appOrigin)
+    normalizeSession(entry, index, userMap, mediaMaps, appOrigin, nowMs)
   )
 
   return {
     available: true,
-    activeWindowSeconds,
     streamCount: sessions.length,
     transcodeCount: 0,
     sessions,
@@ -445,7 +396,7 @@ export async function getActiveMediaSessions(request) {
 }
 
 export async function getActiveMediaSessionsOrUnavailable(request, errorMessage) {
-  const unavailablePayload = () => buildEmptyMediaActivityPayload(request, {
+  const unavailablePayload = () => buildEmptyMediaActivityPayload({
     available: false,
     error: errorMessage || 'Media activity temporarily unavailable',
   })
@@ -462,17 +413,10 @@ export async function getActiveMediaSessionsOrUnavailable(request, errorMessage)
   return Promise.race([lookup, timeout])
 }
 
-export function buildEmptyMediaActivityPayload(request, options = {}) {
-  const url = new URL(request.url)
+export function buildEmptyMediaActivityPayload(options = {}) {
   return {
     available: options.available !== false,
     error: options.error || null,
-    activeWindowSeconds: clampNumber(
-      url.searchParams.get('activeWindowSeconds'),
-      DEFAULT_ACTIVE_WINDOW_SECONDS,
-      1,
-      MAX_ACTIVE_WINDOW_SECONDS
-    ),
     streamCount: 0,
     transcodeCount: 0,
     sessions: [],
@@ -486,7 +430,6 @@ export function buildMediaActivitySummary(payload) {
     available: payload.available !== false,
     streamCount: payload.streamCount,
     transcodeCount: payload.transcodeCount,
-    activeWindowSeconds: payload.activeWindowSeconds,
     updatedAt: payload.updatedAt,
     sessions: payload.sessions,
   }

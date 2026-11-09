@@ -364,6 +364,27 @@ export default function WithPlayBackTracker({
     latestRef.current = { store, videoURL, mediaMetadata, castAdopted, userId };
   });
 
+  // Once a receiver adopts this title, the television is the viewing session
+  // and the cast reports for itself (plans/media-activity-presence.md, "Cast").
+  // This tab's own row would otherwise linger as a second playing session
+  // until it went stale. A fresh id means a later local resume opens a new
+  // row instead of reviving the one ended here.
+  useEffect(() => {
+    if (!castAdopted) return;
+    const sessionId = sessionIdRef.current;
+    sessionIdRef.current = generateSessionId();
+    try {
+      fetch(PRESENCE_END_URL, {
+        method: 'POST',
+        headers: playbackWriteHeaders(latestRef.current.userId),
+        body: JSON.stringify({ sessionId }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch {
+      // Best-effort — the row's own staleAfter is the backstop.
+    }
+  }, [castAdopted]);
+
   // Best-effort explicit "stopped watching" signal. keepalive lets the
   // request survive page unload; the server-side presence window is fallback.
   //

@@ -8,9 +8,9 @@ import 'server-only'
 
 import clientPromise from '@src/lib/mongodb'
 import { userQueries } from '@src/lib/userQueries'
-import { DEFAULT_ACTIVE_WINDOW_SECONDS, PAUSED_WINDOW_SECONDS } from '@src/utils/playbackPresence/database'
+import { findLiveSessions } from '@src/utils/playbackPresence/live'
+import { livePosition } from '@src/utils/playbackPresence/session'
 import { getTranscoderTargets, fetchTargetSessions } from '@src/utils/jit/transcoderAdmin'
-import { getDeviceDescriptor } from '@src/utils/mediaActivity'
 import { recordSamplerDuration } from '@src/utils/monitor_server_load'
 import { sessionVideoId, shapeTranscoderDashboard } from './transcoderSessionsJoin'
 
@@ -43,35 +43,26 @@ async function lookupTitles(db, ids) {
   return titles
 }
 
-/** Who is watching each title now, with the same activity window as the media-activity view. */
-async function lookupViewers(db, ids) {
+/**
+ * Who is watching each title now. A transcoder session knows its title only by
+ * the stream path, so this is the one reader that matches on normalizedVideoId.
+ */
+async function lookupViewers(ids) {
   if (ids.length === 0) return new Map()
-  const now = Date.now()
-  const rows = await db
-    .collection('PlaybackPresence')
-    .find(
-      {
-        normalizedVideoId: { $in: ids },
-        $or: [
-          { isPaused: { $ne: true }, lastHeartbeat: { $gte: new Date(now - DEFAULT_ACTIVE_WINDOW_SECONDS * 1000) } },
-          { isPaused: true, lastHeartbeat: { $gte: new Date(now - PAUSED_WINDOW_SECONDS * 1000) } },
-        ],
-      },
-      { projection: { normalizedVideoId: 1, userId: 1, isPaused: 1, playbackTime: 1, deviceInfo: 1 } }
-    )
-    .toArray()
-  const userIds = [...new Set(rows.map((r) => r.userId).filter(Boolean))]
+  const sessions = await findLiveSessions({ normalizedVideoIds: ids })
+  const userIds = [...new Set(sessions.map((s) => s.userId))]
   const users = userIds.length ? await userQueries.find({ _id: { $in: userIds } }, { name: 1, email: 1 }) : []
   const names = new Map(users.map((u) => [String(u._id), u.name || u.email || 'Unknown user']))
+  const nowMs = Date.now()
   const viewers = new Map()
-  for (const r of rows) {
-    if (!viewers.has(r.normalizedVideoId)) viewers.set(r.normalizedVideoId, [])
-    viewers.get(r.normalizedVideoId).push({
-      name: names.get(String(r.userId)) ?? 'Unknown user',
-      state: r.isPaused ? 'paused' : 'playing',
-      positionSec: Number.isFinite(r.playbackTime) ? Math.round(r.playbackTime) : null,
-      // The same "Chrome · Desktop" wording the media-activity view uses.
-      device: r.deviceInfo ? getDeviceDescriptor(r.deviceInfo).title : null,
+  for (const s of sessions) {
+    if (!viewers.has(s.normalizedVideoId)) viewers.set(s.normalizedVideoId, [])
+    const position = livePosition(s, nowMs)
+    viewers.get(s.normalizedVideoId).push({
+      name: names.get(s.userId) ?? 'Unknown user',
+      state: s.state,
+      positionSec: position === null ? null : Math.round(position),
+      device: s.device.label,
     })
   }
   return viewers
@@ -96,7 +87,7 @@ export async function getTranscoderDashboard() {
   // A problem's title may no longer be playing, so it is looked up too; viewers only for live ones.
   const titleIds = [...new Set([...liveIds, ...problems.map((p) => sessionVideoId(p.path_key))])].filter(Boolean)
   const db = (await clientPromise).db('Media')
-  const [titles, viewers] = await Promise.all([lookupTitles(db, titleIds), lookupViewers(db, liveIds)])
+  const [titles, viewers] = await Promise.all([lookupTitles(db, titleIds), lookupViewers(liveIds)])
 
   // Only the synchronous join and shaping are timed: the awaits above are network and database
   // waits that never block the event loop.

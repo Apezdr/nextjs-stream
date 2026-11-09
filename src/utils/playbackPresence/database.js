@@ -3,6 +3,9 @@
  *
  * Ephemeral "is this session currently active" signal, separate from the
  * durable WatchHistory resume-position store. See plans/media-activity-presence.md.
+ *
+ * Writes only. Reading who is live goes through ./live.js, so every surface
+ * agrees on the answer.
  */
 
 import clientPromise from '@src/lib/mongodb'
@@ -10,17 +13,13 @@ import { ObjectId } from 'mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
 import { createLogger } from '@src/lib/logger'
+import { presenceStateFor, staleAfterFor } from './contract'
 
 const log = createLogger('PlaybackPresence.Database')
 
+// Garbage collection only, never freshness: rows stop counting as live at
+// their own staleAfter. Must stay longer than the longest staleAfter (360 s).
 const PRESENCE_TTL_SECONDS = 600
-
-// Shared with src/utils/mediaActivity.js so both the desktop-widget API and
-// any other consumer (e.g. the admin dashboard) agree on what "active" means.
-export const DEFAULT_ACTIVE_WINDOW_SECONDS = 15
-// Paused sessions ping every ~3 minutes while foregrounded (see
-// WithPlaybackTracker.js); 360s tolerates one missed ping.
-export const PAUSED_WINDOW_SECONDS = 360
 
 async function ensurePresenceIndexes(db) {
   if (globalThis.__playbackPresenceIndexesEnsured) return
@@ -51,11 +50,18 @@ async function ensurePresenceIndexes(db) {
 /**
  * Upsert (or refresh) a presence heartbeat for a player session.
  *
+ * Every write sets the row's `state` and its `staleAfter` (see ./contract.js),
+ * which is the row's own answer to "is this still live".
+ *
  * When `playbackTime` is not a finite number the write is a keep-alive: it
  * refreshes liveness and pause state on an EXISTING row and leaves the row's
  * stored position alone. It never inserts — a positionless ping has nothing
  * to say about a session the server does not know, and the next real
  * position write recreates the row.
+ *
+ * A heartbeat that finds its row already past staleAfter is logged: the client
+ * went longer between check-ins than the contract allows, and every reader
+ * showed it as gone in the meantime.
  *
  * @param {Object} options
  * @param {string|ObjectId} options.userId
@@ -91,35 +97,62 @@ export async function upsertPresenceHeartbeat({
     // Same durable identity as WatchHistory (shared cached resolver). TTL'd
     // collection — no backfill; keyed {userId, sessionId} so no index change.
     const resolved = await resolveMediaIdForNid(normalizedVideoId)
-    // mediaId is durable-identity-only — strip the legacy client value the
-    // metadata always carries (see upsertPlayback for the full rationale).
-    // Nulls never reach $set either: absent means "unchanged", not "erase".
-    const { mediaId: _legacyClientMediaId, ...rawMetadata } = metadata || {}
+    // Identity comes from the catalog, never the client: mediaId for the
+    // reason upsertPlayback gives, showId because clients disagree on it (the
+    // TV app sends its route id). Nulls never reach $set either: absent means
+    // "unchanged", not "erase".
+    const { mediaId: _clientMediaId, showId: _clientShowId, ...rawMetadata } = metadata || {}
     const safeMetadata = Object.fromEntries(
       Object.entries(rawMetadata).filter(([, v]) => v !== null && v !== undefined)
     )
 
     const hasPosition = Number.isFinite(playbackTime)
+    const now = new Date()
+    const state = presenceStateFor(isPaused)
 
-    const result = await collection.updateOne(
+    const result = await collection.findOneAndUpdate(
       { userId: userIdObj, sessionId },
       {
         $set: {
           videoId,
           normalizedVideoId,
-          ...(hasPosition && { playbackTime }),
-          isPaused: isPaused === true,
-          lastHeartbeat: new Date(),
+          ...(hasPosition && { playbackTime, positionAt: now }),
+          state,
+          lastHeartbeat: now,
+          staleAfter: staleAfterFor(state, now),
           ...safeMetadata,
           ...(resolved?.mediaId && { mediaId: resolved.mediaId }),
+          ...(resolved?.mediaType && { mediaType: resolved.mediaType }),
+          ...(resolved?.showId && { showId: resolved.showId }),
           ...(deviceInfo && { deviceInfo }),
           ...(ipAddress && { ipAddress }),
           ...(localIp && { localIp }),
         },
       },
-      { upsert: hasPosition }
+      {
+        upsert: hasPosition,
+        returnDocument: 'before',
+        projection: { state: 1, lastHeartbeat: 1, staleAfter: 1 },
+        includeResultMetadata: true,
+      }
     )
-    return (result.matchedCount ?? 0) > 0 || (result.upsertedCount ?? 0) > 0
+
+    const before = result?.value
+    if (before?.staleAfter && new Date(before.staleAfter) < now) {
+      log.warn(
+        {
+          userId: String(userIdObj),
+          sessionId,
+          deviceType: deviceInfo?.type ?? null,
+          userAgent: deviceInfo?.userAgent ?? null,
+          state: before.state ?? null,
+          gapMs: before.lastHeartbeat ? now - new Date(before.lastHeartbeat) : null,
+        },
+        'Presence heartbeat arrived after its row went stale — client missed the check-in contract'
+      )
+    }
+
+    return (result?.lastErrorObject?.n ?? 0) > 0
   } catch (error) {
     log.error({ error, userId, sessionId, videoId }, 'Failed to upsert presence heartbeat')
     throw error
@@ -154,9 +187,9 @@ export async function isRepeatPausedPing({ userId, sessionId, playbackTime }) {
     const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
     const row = await collection.findOne(
       { userId: userIdObj, sessionId },
-      { projection: { playbackTime: 1, isPaused: 1 } }
+      { projection: { playbackTime: 1, state: 1 } }
     )
-    if (!row || row.isPaused !== true) return false
+    if (!row || row.state !== 'paused') return false
     // Sub-second jitter between what a player reports on pause and what it
     // re-reads for the ping is common; anything under a second is "the same".
     return Math.abs((row.playbackTime ?? NaN) - playbackTime) < 1
@@ -188,46 +221,4 @@ export async function endPresenceSession({ userId, sessionId }) {
     log.error({ error, userId, sessionId }, 'Failed to end presence session')
     throw error
   }
-}
-
-/**
- * Look up currently-active presence sessions for a set of users, using the
- * same two-tier active/paused window as getActiveMediaSessions() in
- * mediaActivity.js. Intended for read-only "is this user watching something
- * right now" consumers (e.g. the admin dashboard) that don't need the full
- * XML/JSON widget-API shape.
- *
- * @param {Array<string|ObjectId>} userIds
- * @returns {Promise<Map<string, Array<Object>>>} userId (string) -> active PlaybackPresence docs
- */
-export async function getActivePresenceForUsers(userIds) {
-  if (!userIds || userIds.length === 0) {
-    return new Map()
-  }
-
-  const client = await clientPromise
-  const db = client.db('Media')
-  const collection = db.collection('PlaybackPresence')
-
-  const userIdObjs = userIds.map((id) => (typeof id === 'string' ? new ObjectId(id) : id))
-  const activeSince = new Date(Date.now() - DEFAULT_ACTIVE_WINDOW_SECONDS * 1000)
-  const pausedSince = new Date(Date.now() - PAUSED_WINDOW_SECONDS * 1000)
-
-  const entries = await collection
-    .find({
-      userId: { $in: userIdObjs },
-      $or: [
-        { isPaused: { $ne: true }, lastHeartbeat: { $gte: activeSince } },
-        { isPaused: true, lastHeartbeat: { $gte: pausedSince } },
-      ],
-    })
-    .toArray()
-
-  const byUser = new Map()
-  for (const entry of entries) {
-    const key = String(entry.userId)
-    if (!byUser.has(key)) byUser.set(key, [])
-    byUser.get(key).push(entry)
-  }
-  return byUser
 }

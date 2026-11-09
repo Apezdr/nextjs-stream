@@ -1,35 +1,16 @@
-const mockSessionSort = jest.fn()
 let mockPresenceEntries = []
 
-function createPresenceCursor() {
-  let entries = mockPresenceEntries.map((entry) => ({ ...entry }))
-
-  return {
-    sort: (sortSpec) => {
-      mockSessionSort(sortSpec)
-
-      if (sortSpec._id) {
-        entries.sort((left, right) =>
-          sortSpec._id * String(left._id).localeCompare(String(right._id))
-        )
-      } else if (sortSpec.lastHeartbeat) {
-        entries.sort((left, right) =>
-          sortSpec.lastHeartbeat * (new Date(left.lastHeartbeat) - new Date(right.lastHeartbeat))
-        )
-      }
-
-      return {
-        limit: (limit) => ({
-          toArray: async () => entries.slice(0, limit),
-        }),
-      }
-    },
-  }
+// The live reader's query: rows whose own expiry has not passed.
+function createPresenceCursor(query) {
+  const entries = mockPresenceEntries
+    .filter((entry) => new Date(entry.staleAfter) > query.staleAfter.$gt)
+    .map((entry) => ({ ...entry }))
+  return { limit: (limit) => ({ toArray: async () => entries.slice(0, limit) }) }
 }
 
 const mockCollection = jest.fn((name) => {
   if (name === 'PlaybackPresence') {
-    return { find: () => createPresenceCursor() }
+    return { find: (query) => createPresenceCursor(query) }
   }
 
   return {
@@ -52,6 +33,10 @@ jest.mock('@src/utils/webhookServer', () => ({
   validateWebhookId: jest.fn().mockResolvedValue({ isValid: false }),
 }))
 
+jest.mock('@src/lib/logger', () => ({
+  createLogger: () => ({ debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }),
+}))
+
 jest.mock('@src/utils/deviceDetection', () => ({
   detectBrowserType: jest.fn(() => 'unknown'),
   getDeviceTypeLabel: jest.fn(() => 'Desktop'),
@@ -67,7 +52,7 @@ jest.mock('mongodb', () => ({
 import { getActiveMediaSessions } from '@src/utils/mediaActivity'
 
 const request = {
-  url: 'http://localhost:3232/api/media-activity?activeWindowSeconds=300',
+  url: 'http://localhost:3232/api/media-activity',
 }
 
 const firstSession = {
@@ -76,7 +61,8 @@ const firstSession = {
   videoId: '/movies/first.mp4',
   playbackTime: 60,
   lastHeartbeat: '2026-01-01T10:00:00.000Z',
-  isPaused: false,
+  state: 'playing',
+  staleAfter: '2999-01-01T00:00:00.000Z',
 }
 
 const secondSession = {
@@ -85,23 +71,23 @@ const secondSession = {
   videoId: '/movies/second.mp4',
   playbackTime: 30,
   lastHeartbeat: '2026-01-01T09:59:00.000Z',
-  isPaused: true,
+  state: 'paused',
+  staleAfter: '2999-01-01T00:00:00.000Z',
 }
 
 describe('media activity session ordering', () => {
   beforeEach(() => {
-    mockSessionSort.mockClear()
     mockPresenceEntries = [firstSession, secondSession]
   })
 
-  it('preserves row order when a paused session resumes and updates lastHeartbeat', async () => {
+  it('keeps rows in start order when a paused session resumes and outranks the other', async () => {
     const beforeResume = await getActiveMediaSessions(request)
 
     mockPresenceEntries = [
       firstSession,
       {
         ...secondSession,
-        isPaused: false,
+        state: 'playing',
         lastHeartbeat: '2026-01-01T10:01:00.000Z',
       },
     ]
@@ -115,7 +101,5 @@ describe('media activity session ordering', () => {
       firstSession._id,
       secondSession._id,
     ])
-    expect(mockSessionSort).toHaveBeenNthCalledWith(1, { _id: 1 })
-    expect(mockSessionSort).toHaveBeenNthCalledWith(2, { _id: 1 })
   })
 })

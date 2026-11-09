@@ -13,12 +13,13 @@ Requests must include either:
 
 ### `GET /api/media-activity`
 
-Returns a universal JSON summary of active playback sessions.
+Returns a universal JSON summary of active playback sessions: every session that is live by the presence contract ([media-activity-presence.md](./media-activity-presence.md)), in the order the sessions started. A playing session's position is projected to the time of the request.
 
 Query parameters:
 
-- `activeWindowSeconds`: how recently a playback heartbeat must have updated to count as active. Defaults to `15`; maximum is `300`.
 - `limit`: max sessions returned. Defaults to `10`; maximum is `10` to match the desktop skin layout.
+
+`activeWindowSeconds` was removed on 2026-11-08, from both the query and the response: each presence row now carries its own expiry, so there is no window left for a caller to tune.
 
 ### `GET /api/media-activity/xml/status/sessions`
 
@@ -30,7 +31,7 @@ Returns compatibility XML with the current transcode count. NextJS Stream playba
 
 ### `GET /api/media-activity/xml/metadata/[id]`
 
-Returns compatibility XML for one active session from the active playback window.
+Returns compatibility XML for one active session, by its row id.
 
 ## Desktop Skin Variables
 

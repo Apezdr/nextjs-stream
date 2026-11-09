@@ -40,11 +40,7 @@ One other field-level detail worth double-checking against whatever's already im
 
 This is very likely genuinely new work, not just a field addition — it's the actual bug this whole feature fixes, and if the RN app's existing watch-history tracking has the same shape as the web client's *original* design, it probably only sends a heartbeat on state *transitions* (play→pause, pause→play), not a repeating signal while paused. That's exactly what caused the original staleness bug on web.
 
-The server's read-side freshness windows (`src/utils/mediaActivity.js`) are two fixed values, tuned to two different heartbeat cadences:
-- **15s** (default, caller-tunable up to 300s) for playing sessions — assumes a roughly-continuous heartbeat while actively playing (the web client throttles to ~1s).
-- **360s, fixed** for paused sessions — calibrated as 2x the web client's 3-minute paused-ping interval (tolerating one missed ping).
-
-**Match the paused cadence (~3 minutes) or coordinate a change to the 360s server constant together** — a much sparser paused heartbeat will cause sessions to flicker out of "active" between pings; a much tighter one wastes battery/data for no benefit (this exact tradeoff was already litigated for the web client — see `media-activity-presence.md` for the reasoning if useful context). Only ping while paused *and* the app is foregrounded — there's no need to keep pinging once backgrounded, since that's what the next endpoint is for.
+Superseded 2026-11-08: freshness is now a contract every client must meet, not a read-side window. See "Live means `staleAfter > now`" in [media-activity-presence.md](./media-activity-presence.md). Check in at least every 30 s while playing and at least every 180 s while paused; the server marks each row live for twice that. Checking in more often is fine, less often is not. The app's 30 s / 180 s cadence already meets it. Only ping while paused *and* the app is foregrounded — there's no need to keep pinging once backgrounded, since that's what the next endpoint is for.
 
 ### C. An explicit "stopped watching" signal
 

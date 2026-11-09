@@ -1,7 +1,7 @@
 'use client'
 
 import { AnimatePresence, motion } from 'framer-motion'
-import { memo, useState, useCallback, useEffect } from 'react'
+import { memo, useState, useCallback } from 'react'
 import Loading from '@src/app/loading'
 import { classNames, buildURL } from '@src/utils'
 import Image from 'next/image'
@@ -26,10 +26,6 @@ export default memo(function EnhancedRecentlyWatched({ recentlyWatched }) {
       ? recentlyWatched.data
       : []
 
-  useEffect(() => {
-    if (selectedUser) setCurrentPage(0)
-  }, [selectedUser])
-
   const fetchUserData = useCallback(async (userId, page = 0) => {
     setIsLoading(true)
     try {
@@ -49,6 +45,7 @@ export default memo(function EnhancedRecentlyWatched({ recentlyWatched }) {
 
   const handleUserClick = useCallback((userData) => {
     setSelectedUser(userData)
+    setCurrentPage(0)
     const userId = userData?.user?._id
     if (!userId) return console.error('No user ID found:', userData?.user)
     fetchUserData(userId)
@@ -263,23 +260,27 @@ function heartbeatAge(lastHeartbeat) {
   return `${Math.round(minutes / 60)}h ago`
 }
 
-function describeDevice(device) {
-  const label = DEVICE_LABELS[device.deviceType] || 'Unknown device'
-  const state = device.isPaused ? 'Paused' : 'Watching'
-  const age = heartbeatAge(device.lastHeartbeat)
-  return age ? `${label} · ${state} · ${age}` : `${label} · ${state}`
+function stateLabel(session) {
+  return session.state === 'paused' ? 'Paused' : 'Watching'
+}
+
+function describeSession(session) {
+  const label = DEVICE_LABELS[session.device?.type] || 'Unknown device'
+  const age = heartbeatAge(session.lastHeartbeat)
+  return age ? `${label} · ${stateLabel(session)} · ${age}` : `${label} · ${stateLabel(session)}`
 }
 
 /**
  * "N devices" for a title with more than one live session. The badge and
- * icon on the card belong to the newest session; this is where the others
- * are. Hover shows them as a native tooltip, tap or click expands them
- * inline (the card clips overflow, so nothing floats).
+ * icon on the card belong to the first session (playing before paused, then
+ * the newest heartbeat); this is where the others are. Hover shows them as a
+ * native tooltip, tap or click expands them inline (the card clips overflow,
+ * so nothing floats).
  */
-function ActiveDevicesNote({ devices }) {
+function ActiveDevicesNote({ sessions }) {
   const [open, setOpen] = useState(false)
-  if (!Array.isArray(devices) || devices.length < 2) return null
-  const tooltip = devices.map(describeDevice).join('\n')
+  if (!Array.isArray(sessions) || sessions.length < 2) return null
+  const tooltip = sessions.map(describeSession).join('\n')
 
   return (
     <div className="mt-1">
@@ -295,17 +296,17 @@ function ActiveDevicesNote({ devices }) {
         className="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
       >
         <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500" aria-hidden="true" />
-        {devices.length} devices
+        {sessions.length} devices
       </button>
       {open && (
         <ul className="mt-1 space-y-1">
-          {devices.map((device, index) => (
-            <li key={`${device.deviceType}-${index}`} className="flex items-center gap-1.5 text-[10px] text-gray-600">
-              <DeviceBadge deviceType={device.deviceType} userAgent={device.userAgentTruncated} size="small" />
-              <span className={device.isPaused ? 'text-amber-700' : 'text-green-700'}>
-                {device.isPaused ? 'Paused' : 'Watching'}
+          {sessions.map((session) => (
+            <li key={session.id} className="flex items-center gap-1.5 text-[10px] text-gray-600">
+              <DeviceBadge deviceType={session.device?.type} userAgent={session.device?.userAgent} size="small" />
+              <span className={session.state === 'paused' ? 'text-amber-700' : 'text-green-700'}>
+                {stateLabel(session)}
               </span>
-              <span className="text-gray-400">{heartbeatAge(device.lastHeartbeat)}</span>
+              <span className="text-gray-400">{heartbeatAge(session.lastHeartbeat)}</span>
             </li>
           ))}
         </ul>
@@ -317,6 +318,9 @@ function ActiveDevicesNote({ devices }) {
 function MediaChip({ video }) {
   const title = video?.title || 'Unknown'
   const isTv = video?.type === 'tv'
+  // The first live session decides the badge (playbackPresence/attach.js).
+  const liveSession = video?.liveSessions?.[0] ?? null
+  const isPaused = liveSession?.state === 'paused'
   const pct = Math.min(
     100,
     Math.max(0, ((video?.playbackTime || 0) / ((video?.duration || 1) / 1000)) * 100)
@@ -346,10 +350,10 @@ function MediaChip({ video }) {
         )}
 
         {/* Watching Now Badge */}
-        {video.watchingNow && (
+        {liveSession && (
           <div className="absolute top-1 left-1">
-            <StatusBadge status={video.isPaused ? 'warning' : 'success'} size="small" pulse={!video.isPaused}>
-              {video.isPaused ? 'Paused' : 'Watching'}
+            <StatusBadge status={isPaused ? 'warning' : 'success'} size="small" pulse={!isPaused}>
+              {stateLabel(liveSession)}
             </StatusBadge>
           </div>
         )}
@@ -374,7 +378,7 @@ function MediaChip({ video }) {
           </span>
           <span className="text-xs text-gray-400">{video.lastWatchedDate}</span>
         </div>
-        <ActiveDevicesNote devices={video.activeDevices} />
+        <ActiveDevicesNote sessions={video.liveSessions} />
       </div>
     </div>
   )

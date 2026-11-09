@@ -7,7 +7,7 @@ import {
 } from '@src/utils/admin_database'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import { FULL_LIBRARY } from '@src/lib/roles/libraryScope'
-import { getActivePresenceForUsers } from '@src/utils/playbackPresence/database'
+import { findLiveSessions } from '@src/utils/playbackPresence/live'
 import { attachPresenceToVideos } from '@src/utils/playbackPresence/attach'
 import { ObjectId } from 'mongodb'
 import { userQueries } from '@src/lib/userQueries'
@@ -187,14 +187,19 @@ export async function GET(request, props) {
             const client = await clientPromise
             const users = await userQueries.findAll()
 
-            // One shared query for every user's currently-active presence,
-            // instead of an N+1 lookup inside the per-user map below. A
-            // failure here should only cost the live badge, not blank the
-            // whole recently-watched response.
-            const activePresenceByUser = await getActivePresenceForUsers(users.map((user) => user._id)).catch((error) => {
-              console.error(`Error fetching active presence for recently-watched: ${error.message}`)
-              return new Map()
+            // One shared query for every user's live sessions, instead of an
+            // N+1 lookup inside the per-user map below. A failure here should
+            // only cost the live badge, not blank the whole recently-watched
+            // response.
+            const liveSessions = await findLiveSessions({ userIds: users.map((user) => user._id) }).catch((error) => {
+              console.error(`Error fetching live sessions for recently-watched: ${error.message}`)
+              return []
             })
+            const liveSessionsByUser = new Map()
+            for (const session of liveSessions) {
+              if (!liveSessionsByUser.has(session.userId)) liveSessionsByUser.set(session.userId, [])
+              liveSessionsByUser.get(session.userId).push(session)
+            }
 
             // For each user, get their recently watched media using the flat database approach
             const lastWatchedPromises = users.map(async (user) => {
@@ -237,13 +242,13 @@ export async function GET(request, props) {
                   }
                 })
 
-                // Flag whichever of this user's recently-watched videos matches
-                // a currently-active presence session, so the dashboard can
-                // show a live "Watching Now"/"Paused" badge on it. With several
-                // sessions on one title the newest heartbeat decides both the
-                // badge and the device icon; see playbackPresence/attach.js.
-                const activeSessions = activePresenceByUser.get(user._id.toString()) || []
-                const videosWithPresence = attachPresenceToVideos(watchedMedia, activeSessions)
+                // Attach this user's live sessions to the matching cards, so
+                // the dashboard can badge them "Watching" or "Paused". With
+                // several sessions on one title, the first by rankSessions
+                // decides both the badge and the device icon; see
+                // playbackPresence/attach.js.
+                const userSessions = liveSessionsByUser.get(user._id.toString()) || []
+                const videosWithPresence = attachPresenceToVideos(watchedMedia, userSessions)
 
                 // Format the data to match the structure expected by the component
                 return {

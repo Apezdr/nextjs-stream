@@ -11,27 +11,17 @@ const mockFindCalls = {
   FlatTVShows: [],
 }
 
-function createPresenceCursor() {
-  let entries = mockMediaData.PlaybackPresence.map((entry) => ({ ...entry }))
-
-  return {
-    sort: (sortSpec) => {
-      entries.sort((left, right) =>
-        sortSpec._id * String(left._id).localeCompare(String(right._id))
-      )
-
-      return {
-        limit: (limit) => ({
-          toArray: async () => entries.slice(0, limit),
-        }),
-      }
-    },
-  }
+// The live reader's query: rows whose own expiry has not passed.
+function createPresenceCursor(query) {
+  const entries = mockMediaData.PlaybackPresence
+    .filter((entry) => new Date(entry.staleAfter) > query.staleAfter.$gt)
+    .map((entry) => ({ ...entry }))
+  return { limit: (limit) => ({ toArray: async () => entries.slice(0, limit) }) }
 }
 
 const mockCollection = jest.fn((name) => ({
   find: (filter, options) => {
-    if (name === 'PlaybackPresence') return createPresenceCursor()
+    if (name === 'PlaybackPresence') return createPresenceCursor(filter)
 
     mockFindCalls[name].push({ filter, options })
     return {
@@ -55,6 +45,10 @@ jest.mock('@src/utils/webhookServer', () => ({
   validateWebhookId: jest.fn().mockResolvedValue({ isValid: false }),
 }))
 
+jest.mock('@src/lib/logger', () => ({
+  createLogger: () => ({ debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }),
+}))
+
 jest.mock('@src/utils/deviceDetection', () => ({
   detectBrowserType: jest.fn(() => 'unknown'),
   getDeviceTypeLabel: jest.fn(() => 'Desktop'),
@@ -67,7 +61,7 @@ jest.mock('mongodb', () => ({
 import { getActiveMediaSessions } from '@src/utils/mediaActivity'
 
 const request = {
-  url: 'http://localhost:3232/api/media-activity?activeWindowSeconds=300',
+  url: 'http://localhost:3232/api/media-activity',
 }
 
 function setActiveEpisode(overrides = {}) {
@@ -77,7 +71,8 @@ function setActiveEpisode(overrides = {}) {
     videoId: '/tv/show/episode-1.mp4',
     playbackTime: 60,
     lastHeartbeat: '2026-01-01T10:00:00.000Z',
-    isPaused: false,
+    state: 'playing',
+    staleAfter: '2999-01-01T00:00:00.000Z',
   }]
   mockMediaData.FlatEpisodes = [{
     showId: 'show-1',
