@@ -25,6 +25,7 @@ import {
 } from '@src/utils/media/tvFacts'
 import { tvSeasonPosterName, tvEpisodePosterName } from '@src/utils/viewTransitionNames'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
+import WatchingNowLine from '@components/WatchingNow/WatchingNowLine'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import NoEpisodesFound from './NoEpisodesFound'
 import { Trail, MetaLine, FactRow, SECONDARY_CLASSES } from './details/Primitives'
@@ -153,6 +154,14 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
             items={[yearOf(season.airDate || season.metadata?.air_date), `${count} episode${count === 1 ? '' : 's'}`]}
             chips={quality.chips}
           />
+          {showId ? (
+            <WatchingNowLine
+              showId={showId}
+              seasonNumber={n}
+              show={{ originalTitle: summary.originalTitle ?? null, showTitle: summary.title ?? null }}
+              className="mt-3"
+            />
+          ) : null}
           {overview ? <p className="mt-3 max-w-[65ch] text-[15px] leading-relaxed text-white/85 sm:text-base">{overview}</p> : null}
           {showOverview || facts.length > 0 ? (
             <details className="group mt-4">

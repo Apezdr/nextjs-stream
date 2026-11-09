@@ -8,6 +8,11 @@
 //
 // Always the caller's own sessions: there is no userId parameter, and under
 // "View as" the caller is the viewed user. Never cached: it is live.
+//
+// `asOf` is the server's clock when the sessions were read. A client that
+// moves a playing position on between polls (positionAt + elapsed) counts
+// the elapsed time from it, so a TV whose clock is minutes off still shows
+// the right position.
 import { NextResponse } from 'next/server'
 import { approvedGate } from '@src/lib/roles/gates'
 import { findOwnLiveSessions } from '@src/utils/playbackPresence/personal'
@@ -55,7 +60,7 @@ export async function GET(request: Request) {
       : showId
         ? sessionsOnShow(own, showId, season)
         : own
-    return NextResponse.json({ sessions }, { headers: NO_STORE })
+    return NextResponse.json({ sessions, asOf: new Date().toISOString() }, { headers: NO_STORE })
   } catch (error) {
     log.error({ err: error, userId: user.id }, 'Failed to read own live sessions')
     return NextResponse.json({ error: 'Failed to read live sessions' }, { status: 500, headers: NO_STORE })

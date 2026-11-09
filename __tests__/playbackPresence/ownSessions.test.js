@@ -146,9 +146,11 @@ describe('GET /api/authenticated/presence', () => {
     const res = await get()
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBe('no-store, private')
-    const { sessions } = await res.json()
+    const { sessions, asOf } = await res.json()
     expect(sessions).toHaveLength(3)
     expect(sessions[0]).not.toHaveProperty('ipAddress')
+    // The server's clock, for a client that moves a playing position on between polls
+    expect(Number.isFinite(Date.parse(asOf))).toBe(true)
     expect(mockFindLiveSessions).toHaveBeenCalledWith({ userIds: [USER] })
   })
 

@@ -165,18 +165,3 @@ export function sessionsOnShow(sessions, showId, seasonNumber = null) {
     )
   )
 }
-
-/**
- * Where the session is now, in seconds. A playing session has moved on since
- * its position was written; a paused one has not.
- *
- * @param {Object} session - a LiveSession
- * @param {number} [nowMs]
- * @returns {number | null}
- */
-export function livePosition(session, nowMs = Date.now()) {
-  if (!Number.isFinite(session?.position)) return null
-  if (session.state !== 'playing' || !session.positionAt) return session.position
-  const elapsed = (nowMs - time(session.positionAt)) / 1000
-  return elapsed > 0 ? session.position + elapsed : session.position
-}

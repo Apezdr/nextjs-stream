@@ -6,6 +6,7 @@ import { artworkInUse } from '@src/utils/media/artwork'
 import { displayTitleOf, splitTitle, yearOf, qualityChips, certificationOf, movieFacts } from '@src/utils/media/detailsFacts'
 import { durationMsFrom, formatRuntime } from '@components/WatchProgress/progress'
 import WatchProgressPanel from '@components/WatchProgress/WatchProgressPanel'
+import WatchingNowLine from '@components/WatchingNow/WatchingNowLine'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { WatchedByLine } from './ViewCount'
 import { Breadcrumb, MetaLine, DetailsPanel } from './details/Primitives'
@@ -27,7 +28,8 @@ const ACTIONS_ID = 'movie-hero-actions'
  * library access (`access`, which the collection strip reads), so nothing
  * here may read per-user state: the primary button's label, the resume
  * block and the sticky bar read the viewer's position on the client, and
- * the admin edit link decides its own visibility after hydration.
+ * the admin edit link decides its own visibility after hydration, and the
+ * "watching now" line asks for the viewer's live sessions from the client.
  *
  * The page carries the `media-details-page` marker class: globals.css uses
  * it (`body:has(...)`) to lift the fixed backdrop's cover so the hero shows
@@ -89,6 +91,9 @@ const MovieDetailsComponent = ({ media, access }) => {
           <h1 className="mt-2 text-balance text-3xl font-bold leading-[1.05] tracking-tight text-white drop-shadow-md sm:text-5xl">{headline}</h1>
           {subtitle ? <p className="mt-1.5 text-balance text-xl font-semibold leading-tight text-white/85 sm:text-3xl">{subtitle}</p> : null}
           <MetaLine className="mt-3" items={[yearOf(release_date), formatRuntime(durationMs), certificationOf(metadata)]} chips={chips} />
+          {media.mediaId || media.normalizedVideoId ? (
+            <WatchingNowLine mediaId={media.mediaId || null} normalizedVideoId={media.normalizedVideoId || null} className="mt-3" />
+          ) : null}
           {tagline ? <p className="mt-4 text-base italic text-white/70">{tagline}</p> : null}
           {overview ? <p className="mt-3 max-w-[65ch] text-[15px] leading-relaxed text-white/85 sm:text-base">{overview}</p> : null}
         </div>

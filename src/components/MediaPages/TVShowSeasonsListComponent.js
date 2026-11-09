@@ -26,6 +26,7 @@ import {
   showFacts,
 } from '@src/utils/media/tvFacts'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
+import WatchingNowLine from '@components/WatchingNow/WatchingNowLine'
 import WatchlistButton from '@components/WatchlistButton'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { Trail, MetaLine, SectionHeading, DetailsPanel, SECONDARY_CLASSES } from './details/Primitives'
@@ -137,6 +138,13 @@ export default async function TVShowSeasonsList({ showTitle, show = null, userId
             items={[showYears(m), genreNames.length ? genreNames.join(' / ') : null]}
             chips={statusChip ? [{ label: statusChip, tone: 'status' }] : []}
           />
+          {doc._id ? (
+            <WatchingNowLine
+              showId={String(doc._id)}
+              show={{ originalTitle: doc.originalTitle ?? null, showTitle: doc.title ?? null }}
+              className="mt-3"
+            />
+          ) : null}
           {m.tagline ? <p className="mt-4 text-base italic text-white/70">{m.tagline}</p> : null}
           {overview ? <p className="mt-3 max-w-[65ch] text-[15px] leading-relaxed text-white/85 sm:text-base">{overview}</p> : null}
         </div>

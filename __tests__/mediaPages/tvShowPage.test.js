@@ -25,9 +25,14 @@ jest.mock('next/image', () => ({
   default: ({ src, alt, fill, priority, quality, placeholder, blurDataURL, sizes, ...rest }) => <img src={typeof src === 'string' ? src : ''} alt={alt} {...rest} />,
 }))
 
+// Every SWR key a render asks for: the "watching now" line's is the presence endpoint's URL
+const mockSWRKeys = []
 jest.mock('swr', () => ({
   __esModule: true,
-  default: () => ({ data: undefined, error: undefined, isLoading: false }),
+  default: (key) => {
+    mockSWRKeys.push(key)
+    return { data: undefined, error: undefined, isLoading: false }
+  },
   mutate: jest.fn(),
 }))
 
@@ -143,6 +148,8 @@ const episodes = [
 // The viewer's library access, as SessionGate hands it down (the whole library)
 const FULL = { id: 'all', scope: null, showIds: null }
 
+const presenceKeys = () => mockSWRKeys.filter((key) => typeof key === 'string' && key.startsWith('/api/authenticated/presence'))
+
 async function renderShow(props = {}) {
   const ui = await TVShowSeasonsList({ showTitle: 'Preacher', show: preacher, userId: 'u1', access: FULL, ...props })
   return render(ui)
@@ -221,6 +228,12 @@ describe('TVShowSeasonsList', () => {
     expect(getFlatRequestedMedia).toHaveBeenCalledWith({ access: FULL, type: 'tv', title: 'Preacher' })
     expect(screen.getByText('No seasons in your library yet.')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /S1 · E1/ })).toBeNull()
+  })
+
+  it('asks for the viewer’s live sessions on any of the show’s episodes, from the client', async () => {
+    mockSWRKeys.length = 0
+    await renderShow()
+    expect(presenceKeys()).toEqual(['/api/authenticated/presence?showId=show1'])
   })
 
   it('says so when the show is not in the library', async () => {

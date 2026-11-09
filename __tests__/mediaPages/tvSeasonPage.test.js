@@ -20,9 +20,14 @@ jest.mock('next/image', () => ({
   default: ({ src, alt, fill, priority, quality, placeholder, blurDataURL, sizes, ...rest }) => <img src={typeof src === 'string' ? src : ''} alt={alt} {...rest} />,
 }))
 
+// Every SWR key a render asks for: the "watching now" line's is the presence endpoint's URL
+const mockSWRKeys = []
 jest.mock('swr', () => ({
   __esModule: true,
-  default: () => ({ data: undefined, error: undefined, isLoading: false }),
+  default: (key) => {
+    mockSWRKeys.push(key)
+    return { data: undefined, error: undefined, isLoading: false }
+  },
   mutate: jest.fn(),
 }))
 
@@ -136,6 +141,8 @@ const season = {
   ],
 }
 
+const presenceKeys = () => mockSWRKeys.filter((key) => typeof key === 'string' && key.startsWith('/api/authenticated/presence'))
+
 async function renderSeason(props = {}) {
   const ui = await TVEpisodesListComponent({ showTitle: 'Preacher', originalTitle: 'Preacher', seasonNumber: '1', userId: 'u1', ...props })
   return render(ui)
@@ -222,6 +229,12 @@ describe('TVEpisodesListComponent', () => {
     await renderSeason()
     fireEvent.change(screen.getByRole('combobox'), { target: { value: '2' } })
     expect(mockPush).toHaveBeenCalledWith('/list/tv/Preacher/2', { scroll: false })
+  })
+
+  it('asks for the viewer’s live sessions on this season’s episodes, from the client', async () => {
+    mockSWRKeys.length = 0
+    await renderSeason()
+    expect(presenceKeys()).toEqual(['/api/authenticated/presence?showId=show1&season=1'])
   })
 
   it('says so when the season is not in the library', async () => {
