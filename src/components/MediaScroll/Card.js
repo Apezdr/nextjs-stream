@@ -12,6 +12,7 @@ import PopupCard from './PopupCard'
 import ProgressBar from '@components/WatchProgress/ProgressBar'
 import useLiveProgress from '@components/WatchProgress/useLiveProgress'
 import { canShowProgress, durationMsFrom } from '@components/WatchProgress/progress'
+import LiveBadge from '@components/WatchingNow/LiveBadge'
 
 // Admin-only, opened from the popup: loaded on first use, not with every rail.
 const ArrDialog = dynamic(() => import('@components/Arr/ArrDialog'), { ssr: false })
@@ -97,6 +98,8 @@ const Card = ({
   // Durable 'mid:…' identity — the localStorage mirror's key, which is what
   // keeps the bar moving between rail refreshes.
   durableMediaId = null,
+  // The URL-hash identity, for matching a live session that has no mediaId yet
+  normalizedVideoId = null,
 }) => {
   const [imageDimensions, setImageDimensions] = useState({
     width: 0,
@@ -142,6 +145,20 @@ const Card = ({
     enabled: progressEligible,
   })
   const showProgressBar = listType === 'recentlyWatched' && progressEligible && progress.hasProgress
+
+  // Whose live sessions the badge and the popup's line are about: a movie or
+  // an episode by its identity, a show by its catalog id (`mediaId` is the
+  // item's id). Not for a title outside the library or a trailer stand-in.
+  const liveTarget =
+    !isAvailable || isTrailer
+      ? null
+      : progressEligible
+        ? durableMediaId || normalizedVideoId
+          ? { title: { mediaId: durableMediaId, normalizedVideoId } }
+          : null
+        : type === 'tv' && mediaId
+          ? { showId: String(mediaId) }
+          : null
 
   // Memoize expensive date calculations (React 19.2 optimization)
   const dateInfo = useMemo(() => {
@@ -610,6 +627,8 @@ const Card = ({
                 </div>
               )}
               
+              {liveTarget ? <LiveBadge {...liveTarget} className="absolute z-20 top-2 left-2" /> : null}
+
               {seasonNumber && (
                 <div className="absolute z-20 bottom-2 left-2 right-2">
                   <div className="bg-gray-200 bg-opacity-20 rounded-xl flex flex-row gap-1 px-2 py-1 justify-center">
@@ -699,6 +718,7 @@ const Card = ({
             posterBlurhash={effectivePosterBlurhash}
             thumbnail={thumbnail}
             isTrailer={isTrailer}
+            liveTarget={liveTarget}
             backdrop={backdrop}
             backdropBlurhash={blurhash?.backdrop || backdropBlurhash}
             videoURL={videoURL}

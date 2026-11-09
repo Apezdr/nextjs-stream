@@ -13,7 +13,7 @@
 
 import { formatClock } from '@components/WatchProgress/progress'
 import { tvHrefs } from '@src/utils/media/tvFacts'
-import { livePosition } from '@src/utils/playbackPresence/position'
+import { livePosition } from '@src/utils/playbackPresence/rules'
 
 /** How many devices the line lists; more than this is "and N more". */
 export const MAX_LISTED_SESSIONS = 3
@@ -81,3 +81,24 @@ export function sessionLineParts(session, { scope, serverNowMs, show = null }) {
   }
 }
 
+
+/**
+ * A card's badge: the verb on the poster, and the sentence for its tooltip
+ * and screen readers. The first session is the one the badge is about (they
+ * arrive ranked); any others are counted, not named.
+ *
+ *   Playing                "Playing S2 · E7 on TV, and 1 more device"
+ *
+ * @param {Array<Object>} sessions - the sessions on the card's title or show, ranked
+ * @param {'title'|'show'} scope
+ * @returns {{ playing: boolean, verb: string, description: string } | null}
+ */
+export function badgeParts(sessions, scope) {
+  const [first, ...others] = Array.isArray(sessions) ? sessions : []
+  if (!first) return null
+  const playing = first.state === 'playing'
+  const verb = playing ? 'Playing' : 'Paused'
+  const noun = episodeNoun(first, scope)
+  const rest = others.length > 0 ? `, and ${others.length} more device${others.length === 1 ? '' : 's'}` : ''
+  return { playing, verb, description: `${verb}${noun ? ` ${noun}` : ''} on ${deviceName(first.device)}${rest}` }
+}

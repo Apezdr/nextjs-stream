@@ -16,7 +16,7 @@
 import { NextResponse } from 'next/server'
 import { approvedGate } from '@src/lib/roles/gates'
 import { findOwnLiveSessions } from '@src/utils/playbackPresence/personal'
-import { sessionsOnShow, sessionsOnTitle } from '@src/utils/playbackPresence/session'
+import { sessionsOnShow, sessionsOnTitle } from '@src/utils/playbackPresence/rules'
 import { createLogger } from '@src/lib/logger'
 
 const log = createLogger('API.Presence')

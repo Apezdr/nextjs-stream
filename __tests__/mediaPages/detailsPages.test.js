@@ -22,14 +22,16 @@ jest.mock('next/image', () => ({
   default: ({ src, alt, fill, priority, quality, placeholder, blurDataURL, sizes, ...rest }) => <img src={typeof src === 'string' ? src : ''} alt={alt} {...rest} />,
 }))
 
-// Every SWR key a render asks for: the "watching now" line's is the presence endpoint's URL
-const mockSWRKeys = []
 jest.mock('swr', () => ({
   __esModule: true,
-  default: (key) => {
-    mockSWRKeys.push(key)
-    return { data: undefined, error: undefined, isLoading: false }
-  },
+  default: () => ({ data: undefined, error: undefined, isLoading: false }),
+}))
+
+// The viewer's own live sessions, as the one store would hand them to the "watching now" line
+let mockOwn = { sessions: [], offsetMs: 0 }
+jest.mock('@components/WatchingNow/ownSessions', () => ({
+  __esModule: true,
+  useOwnLiveSessions: () => mockOwn,
 }))
 
 jest.mock('swr/mutation', () => ({
@@ -68,7 +70,7 @@ jest.mock('react-dom', () => ({
 const MovieDetailsComponent = require('@components/MediaPages/MovieDetailsComponent').default
 const TVEpisodeDetailsComponent = require('@components/MediaPages/TVEpisodeDetailsComponent').default
 
-const presenceKeys = () => mockSWRKeys.filter((key) => typeof key === 'string' && key.startsWith('/api/authenticated/presence'))
+const paused = (fields) => ({ id: 'row-1', sessionId: 's1', state: 'paused', position: 600, positionAt: null, device: { type: 'tv', label: 'TV', platform: 'Android' }, ...fields })
 
 const hobbit = {
   _id: '6a4fa5565bd6dc41316dda7f',
@@ -215,10 +217,14 @@ describe('MovieDetailsComponent', () => {
     expect(within(panel).queryByText(/adamdrumm|example.com/)).not.toBeInTheDocument()
   })
 
-  it('asks for the viewer’s live sessions on this movie, from the client', () => {
-    mockSWRKeys.length = 0
-    render(<MovieDetailsComponent media={hobbit} />)
-    expect(presenceKeys()).toEqual(['/api/authenticated/presence?mediaId=mid%3Aeac02008f5a84746&normalizedVideoId=6a63359ffa2aa04e'])
+  it('says where the viewer is watching this movie', () => {
+    mockOwn = { sessions: [paused({ mediaId: 'mid:eac02008f5a84746' }), paused({ id: 'row-2', mediaId: 'mid:other' })], offsetMs: 0 }
+    try {
+      render(<MovieDetailsComponent media={hobbit} />)
+      expect(screen.getByRole('list', { name: 'Watching now' })).toHaveTextContent(/^Paused on TV · 10:00$/)
+    } finally {
+      mockOwn = { sessions: [], offsetMs: 0 }
+    }
   })
 
   it('renders a bare document without crashing', () => {
@@ -324,10 +330,14 @@ describe('TVEpisodeDetailsComponent', () => {
     expect(grid.children).toHaveLength(1)
   })
 
-  it('asks for the viewer’s live sessions on this episode, from the client', () => {
-    mockSWRKeys.length = 0
-    render(<TVEpisodeDetailsComponent media={withNeighbours} />)
-    expect(presenceKeys()).toEqual(['/api/authenticated/presence?mediaId=mid%3A0123456789abcdef&normalizedVideoId=abc123'])
+  it('says where the viewer is watching this episode', () => {
+    mockOwn = { sessions: [paused({ mediaId: 'mid:0123456789abcdef' })], offsetMs: 0 }
+    try {
+      render(<TVEpisodeDetailsComponent media={withNeighbours} />)
+      expect(screen.getByRole('list', { name: 'Watching now' })).toHaveTextContent(/^Paused on TV · 10:00$/)
+    } finally {
+      mockOwn = { sessions: [], offsetMs: 0 }
+    }
   })
 
   it('renders the stand-in a limited-access viewer gets, with no counts or neighbours', () => {

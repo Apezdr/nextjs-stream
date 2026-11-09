@@ -9,7 +9,7 @@ import {
 import { playableSeasons } from '@src/utils/media/tvFacts'
 import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
 import { findOwnLiveSessions, watchingNowFor } from '@src/utils/playbackPresence/personal'
-import { sessionsOnTitle } from '@src/utils/playbackPresence/session'
+import { sessionsOnTitle } from '@src/utils/playbackPresence/rules'
 import { applyJitPreference } from '@src/utils/jit/preference'
 import { limitResponseCast } from '@src/utils/media/responseCast'
 

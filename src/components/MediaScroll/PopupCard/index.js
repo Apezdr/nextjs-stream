@@ -53,6 +53,7 @@ const PopupCard = (props) => {
     watchHistory: railWatchHistory = null,
     duration: railDuration = null,
     durableMediaId = null,
+    liveTarget = null,
     onOpenArr = null,
   } = props
 
@@ -257,6 +258,7 @@ const PopupCard = (props) => {
           watchHistory={data?.watchHistory ?? railWatchHistory}
           duration={data?.duration ?? railDuration}
           durableMediaId={data?.mediaId ?? durableMediaId}
+          liveTarget={liveTarget}
           onOpenArr={onOpenArr}
         />
 

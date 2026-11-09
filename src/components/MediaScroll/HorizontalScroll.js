@@ -452,6 +452,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
                         watchHistory={item.watchHistory}
                         duration={item.duration}
                         durableMediaId={item.mediaId}
+                        normalizedVideoId={item.normalizedVideoId ?? null}
                       />
                     </div>
                   )

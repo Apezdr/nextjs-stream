@@ -20,15 +20,17 @@ jest.mock('next/image', () => ({
   default: ({ src, alt, fill, priority, quality, placeholder, blurDataURL, sizes, ...rest }) => <img src={typeof src === 'string' ? src : ''} alt={alt} {...rest} />,
 }))
 
-// Every SWR key a render asks for: the "watching now" line's is the presence endpoint's URL
-const mockSWRKeys = []
 jest.mock('swr', () => ({
   __esModule: true,
-  default: (key) => {
-    mockSWRKeys.push(key)
-    return { data: undefined, error: undefined, isLoading: false }
-  },
+  default: () => ({ data: undefined, error: undefined, isLoading: false }),
   mutate: jest.fn(),
+}))
+
+// The viewer's own live sessions, as the one store would hand them to the "watching now" line
+let mockOwn = { sessions: [], offsetMs: 0 }
+jest.mock('@components/WatchingNow/ownSessions', () => ({
+  __esModule: true,
+  useOwnLiveSessions: () => mockOwn,
 }))
 
 jest.mock('swr/mutation', () => ({
@@ -141,7 +143,7 @@ const season = {
   ],
 }
 
-const presenceKeys = () => mockSWRKeys.filter((key) => typeof key === 'string' && key.startsWith('/api/authenticated/presence'))
+const paused = (fields) => ({ id: 'row-1', sessionId: 's1', state: 'paused', position: 600, positionAt: null, device: { type: 'tv', label: 'TV', platform: 'Android' }, ...fields })
 
 async function renderSeason(props = {}) {
   const ui = await TVEpisodesListComponent({ showTitle: 'Preacher', originalTitle: 'Preacher', seasonNumber: '1', userId: 'u1', ...props })
@@ -231,10 +233,14 @@ describe('TVEpisodesListComponent', () => {
     expect(mockPush).toHaveBeenCalledWith('/list/tv/Preacher/2', { scroll: false })
   })
 
-  it('asks for the viewer’s live sessions on this season’s episodes, from the client', async () => {
-    mockSWRKeys.length = 0
-    await renderSeason()
-    expect(presenceKeys()).toEqual(['/api/authenticated/presence?showId=show1&season=1'])
+  it('says which of this season’s episodes the viewer is watching', async () => {
+    mockOwn = { sessions: [paused({ showId: 'show1', seasonNumber: 1, episodeNumber: 2 }), paused({ id: 'row-2', showId: 'show1', seasonNumber: 2, episodeNumber: 1 })], offsetMs: 0 }
+    try {
+      await renderSeason()
+      expect(screen.getByRole('list', { name: 'Watching now' })).toHaveTextContent(/^Paused Episode 2 on TV · 10:00$/)
+    } finally {
+      mockOwn = { sessions: [], offsetMs: 0 }
+    }
   })
 
   it('says so when the season is not in the library', async () => {

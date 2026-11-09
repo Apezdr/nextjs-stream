@@ -86,8 +86,8 @@ jest.mock('@src/utils/deviceDetection', () => ({
 const { ObjectId } = require('mongodb')
 const { MAX_CHECK_IN_INTERVAL_MS, staleAfterFor, presenceStateFor } = require('@src/utils/playbackPresence/contract')
 const { upsertPresenceHeartbeat } = require('@src/utils/playbackPresence/database')
-const { toLiveSession, rankSessions } = require('@src/utils/playbackPresence/session')
-const { livePosition } = require('@src/utils/playbackPresence/position')
+const { toLiveSession } = require('@src/utils/playbackPresence/session')
+const { rankSessions, livePosition } = require('@src/utils/playbackPresence/rules')
 const { findLiveSessions } = require('@src/utils/playbackPresence/live')
 
 const USER = '507f1f77bcf86cd799439011'

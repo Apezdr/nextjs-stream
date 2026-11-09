@@ -25,15 +25,17 @@ jest.mock('next/image', () => ({
   default: ({ src, alt, fill, priority, quality, placeholder, blurDataURL, sizes, ...rest }) => <img src={typeof src === 'string' ? src : ''} alt={alt} {...rest} />,
 }))
 
-// Every SWR key a render asks for: the "watching now" line's is the presence endpoint's URL
-const mockSWRKeys = []
 jest.mock('swr', () => ({
   __esModule: true,
-  default: (key) => {
-    mockSWRKeys.push(key)
-    return { data: undefined, error: undefined, isLoading: false }
-  },
+  default: () => ({ data: undefined, error: undefined, isLoading: false }),
   mutate: jest.fn(),
+}))
+
+// The viewer's own live sessions, as the one store would hand them to the "watching now" line
+let mockOwn = { sessions: [], offsetMs: 0 }
+jest.mock('@components/WatchingNow/ownSessions', () => ({
+  __esModule: true,
+  useOwnLiveSessions: () => mockOwn,
 }))
 
 jest.mock('swr/mutation', () => ({
@@ -148,7 +150,7 @@ const episodes = [
 // The viewer's library access, as SessionGate hands it down (the whole library)
 const FULL = { id: 'all', scope: null, showIds: null }
 
-const presenceKeys = () => mockSWRKeys.filter((key) => typeof key === 'string' && key.startsWith('/api/authenticated/presence'))
+const paused = (fields) => ({ id: 'row-1', sessionId: 's1', state: 'paused', position: 600, positionAt: null, device: { type: 'tv', label: 'TV', platform: 'Android' }, ...fields })
 
 async function renderShow(props = {}) {
   const ui = await TVShowSeasonsList({ showTitle: 'Preacher', show: preacher, userId: 'u1', access: FULL, ...props })
@@ -230,10 +232,15 @@ describe('TVShowSeasonsList', () => {
     expect(screen.queryByRole('link', { name: /S1 · E1/ })).toBeNull()
   })
 
-  it('asks for the viewer’s live sessions on any of the show’s episodes, from the client', async () => {
-    mockSWRKeys.length = 0
-    await renderShow()
-    expect(presenceKeys()).toEqual(['/api/authenticated/presence?showId=show1'])
+  it('says which episode the viewer is watching, and links to it', async () => {
+    mockOwn = { sessions: [paused({ showId: 'show1', seasonNumber: 1, episodeNumber: 2 }), paused({ id: 'row-2', showId: 'other' })], offsetMs: 0 }
+    try {
+      await renderShow()
+      expect(screen.getByRole('list', { name: 'Watching now' })).toHaveTextContent(/^Paused S1 · E2 on TV · 10:00$/)
+      expect(screen.getByRole('link', { name: 'S1 · E2' })).toHaveAttribute('href', '/list/tv/Preacher/1/2')
+    } finally {
+      mockOwn = { sessions: [], offsetMs: 0 }
+    }
   })
 
   it('says so when the show is not in the library', async () => {

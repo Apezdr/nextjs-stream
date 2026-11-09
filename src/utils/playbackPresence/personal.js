@@ -7,7 +7,7 @@
  */
 
 import { findLiveSessions } from './live'
-import { sessionsOnShow, sessionsOnTitle } from './session'
+import { sessionsOnShow, sessionsOnTitle } from './rules'
 
 /**
  * A LiveSession as its own user sees it. The addresses and the raw user agent

@@ -7,7 +7,7 @@
  * then the newest heartbeat); the others are listed for the "N devices" note.
  */
 
-import { sessionsOnTitle } from './session'
+import { sessionsOnTitle } from './rules'
 
 /**
  * The live sessions for one card, ranked. The same title rule as every other

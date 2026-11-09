@@ -9,6 +9,7 @@ import Loading from '@src/app/loading'
 import ProgressBar from '@components/WatchProgress/ProgressBar'
 import useLiveProgress from '@components/WatchProgress/useLiveProgress'
 import { canShowProgress, durationMsFrom } from '@components/WatchProgress/progress'
+import WatchingNowLine from '@components/WatchingNow/WatchingNowLine'
 
 const WatchlistButton = dynamic(() => import('@components/WatchlistButton'), {
   ssr: false,
@@ -68,6 +69,8 @@ const InfoSection = ({
   watchHistory = null,
   duration = null,
   durableMediaId = null,
+  // The card's live-session target (Card): { title } or { showId }, or null
+  liveTarget = null,
   onOpenArr = null,
 }) => {
   const isTrailer = !data?.clipVideoURL && data?.trailer_url
@@ -194,6 +197,16 @@ const InfoSection = ({
           <span className="text-sm text-gray-800 font-medium">{displayDate.value}</span>
         </div>
       )}
+
+      {liveTarget ? (
+        <WatchingNowLine
+          mediaId={liveTarget.title?.mediaId ?? null}
+          normalizedVideoId={liveTarget.title?.normalizedVideoId ?? null}
+          showId={liveTarget.showId ?? null}
+          tone="light"
+          className="mb-3"
+        />
+      ) : null}
 
       {showProgress && (
         <div className="mb-3" data-testid="popup-watch-progress">

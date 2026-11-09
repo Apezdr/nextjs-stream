@@ -94,7 +94,7 @@ A receiver loaded before the deploy keeps running the old script until it relaun
 `src/utils/playbackPresence/live.js` is the only code that reads `PlaybackPresence` for liveness.
 
 - `findLiveSessions({ userIds?, mediaIds?, showIds?, normalizedVideoIds? })` (`live.js`) runs one query on `staleAfter > now` and returns ranked `LiveSession`s. An empty filter list matches nothing.
-- The shape and the rules are pure, in `session.js`: `toLiveSession(row)`, `rankSessions(sessions)` (playing before paused, then the newest `lastHeartbeat`), and `describeDevice(deviceInfo)`. `livePosition(session, nowMs)` has a module of its own, `position.js`, with no imports, so the web's media pages can tick a position without the user-agent parser in their bundle.
+- The shape is pure, in `session.js`: `toLiveSession(row)` and `describeDevice(deviceInfo)`. The rules are in `rules.js`, which imports nothing, so the server's readers and the web's client components apply the same ones: `rankSessions(sessions)` (playing before paused, then the newest `lastHeartbeat`), `isOnTitle` / `sessionsOnTitle` (the title rule), `sessionsOnShow` (the show rule) and `livePosition(session, nowMs)`.
 - Titles are matched by `mediaId` when both sides carry one, and by `normalizedVideoId` only when one side has no `mediaId` yet (`attach.js`). Two different `mediaId`s are two titles, whatever the hash says. The `normalizedVideoIds` filter exists only for the transcoder-sessions view, which knows a title by nothing else.
 
 ```js
@@ -139,12 +139,17 @@ Built 2026-11-09 (step 3). One module, `src/utils/playbackPresence/personal.js`,
 
   `watchingNow: []` means nothing is live; the field is **absent** when it was not asked for or could not be read. It passes through the TV-device shape (`sanitizeTVData`) and the card shape (`sanitizeCardData`), so the web's hover cards, which ask for watch history, get it too.
 - **Season and episode numbers come from the catalog.** The write resolves them from `FlatEpisodes` with `showId` (`resolveMediaIdForNid`), so a show page names the right episode whichever client reported it. The client's numbers stand only when the catalog has none.
-- **Web media pages** (built 2026-11-09, step 4): `WatchingNowLine` (`src/components/WatchingNow/`) sits under the meta line on the movie, episode, season and show pages. It asks the presence endpoint from the client (SWR) and again every 15 s while the tab is visible, and when the tab comes back; the pages' cached and prefetched shells never carry it. One line per device, at most three, then "and N more":
-  - a movie or an episode: "Playing on TV · 41:12", "Paused on Chrome · Desktop · 12:03";
-  - a show: "Playing S2 · E7 on TV · 41:12"; a season: "Playing Episode 7 on TV". The episode noun is the primary button's (`nextUpNoun`), Specials included, and links to the episode page;
-  - a cast reads "on a Cast device", a device with no label "on another device"; no position yet, no clock.
+- **Web** (built 2026-11-09, step 4; cards added the same day): one client store, `src/components/WatchingNow/ownSessions.js`, asks the unfiltered endpoint once per page, however many surfaces read it, and again every 15 s while one is mounted and the tab is visible. A user has a handful of live sessions at most, so one answer serves every title on the page; each surface picks its own with the rules above. A failed poll reads as nothing live, a 401 or 403 stops the polling, and an answer older than one poll is dropped when a surface mounts after a client navigation. The pages' cached and prefetched shells never carry any of it. The surfaces:
+  - **The line** (`WatchingNowLine`), under the meta line on the movie, episode, season and show pages. One line per device, at most three, then "and N more":
+    - a movie or an episode: "Playing on TV · 41:12", "Paused on Chrome · Desktop · 12:03";
+    - a show: "Playing S2 · E7 on TV · 41:12"; a season: "Playing Episode 7 on TV". The episode noun is the primary button's (`nextUpNoun`), Specials included, and links to the episode page;
+    - a cast reads "on a Cast device", a device with no label "on another device"; no position yet, no clock.
 
-  A playing position ticks once a second from `positionAt` by the server's clock (`asOf`). Nothing shows when nothing is live, before the first answer, or after a failed poll (the line disappears rather than keep an old "Playing"). A 401 or 403 stops the polling. It does not use the media payload's `watchingNow`: the pages are cached, the poll is not.
+    A playing position ticks once a second from `positionAt` by the server's clock (`asOf`).
+  - **The card badge** (`LiveBadge`) on the rails' cards: "Playing" or "Paused" at the poster's top left, with the sentence ("Playing S2 · E7 on TV, and 1 more device") as its tooltip and screen-reader text. A movie or episode card matches by the title rule, a show card by its catalog id (any episode). Never on a title outside the library or a trailer stand-in. Its own component, so only the badge re-renders when the sessions change.
+  - **The hover popup:** the line, in the popup's light tone, above the resume block; it names a show's episode without a link.
+
+  None of them uses the media payload's `watchingNow`: the pages are cached, the poll is not.
 - **TV app media pages:** the same endpoint, with the same words. Handed over as a doc, [TV app: watching now on media pages](https://claude.ai/artifact/RvwReSuGJJFraWYSuv4esP) (2026-11-09), since that repo is read-only from here, and shipped together with the web UI. `watchingNow` on the payload the screen already loads paints the first frame, so opening a screen costs no request. The app caches media payloads for 5 minutes, so while a screen is focused one `/presence` poll every 15 s keeps it live; on the show screen that one poll serves the hero and every episode row. The canonical API contract (`docs/frontend-api-contract.md` in the TV app's repo) gains `watchingNow` and the endpoint through that doc.
 
 ## Steps

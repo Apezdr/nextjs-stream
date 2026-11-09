@@ -8,7 +8,8 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { createLogger } from '@src/lib/logger'
-import { rankSessions, toLiveSession } from './session'
+import { toLiveSession } from './session'
+import { rankSessions } from './rules'
 
 const log = createLogger('PlaybackPresence.Live')
 

@@ -3,7 +3,7 @@ import { userQueries } from '@src/lib/userQueries'
 import { validateWebhookId } from '@src/utils/webhookServer'
 import { recordKeyCaller } from '@src/lib/requestCaller'
 import { findLiveSessions } from '@src/utils/playbackPresence/live'
-import { livePosition } from '@src/utils/playbackPresence/position'
+import { livePosition } from '@src/utils/playbackPresence/rules'
 
 const DEFAULT_LIMIT = 10
 const LOOKUP_TIMEOUT_MS = 3000
