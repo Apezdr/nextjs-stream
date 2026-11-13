@@ -89,7 +89,7 @@ function UnauthMediaNotFound() {
  *    </AuthGuard>
  *
  * @param {Object} props
- * @param {Object} props.session - NextAuth session object
+ * @param {Object} props.session - better-auth session object (from getSession() in @src/lib/cachedAuth)
  * @param {string} [props.callbackUrl] - URL to redirect to after login (required if no parsedParams)
  * @param {Object} [props.parsedParams] - Parsed URL parameters (for dynamic routes)
  * @param {Object} [props.media] - Media object (if found, for dynamic routes)

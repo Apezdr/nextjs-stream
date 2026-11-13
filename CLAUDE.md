@@ -18,10 +18,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Architecture Overview
 
 ### Technology Stack
-- **Framework**: Next.js 15 with React 19
+- **Framework**: Next.js 16 (App Router, Turbopack) with React 19; exact versions are in `package.json`. `next.config.js` turns on `cacheComponents`, `partialPrefetching` and the React Compiler, and request interception lives in `src/proxy.ts` (Next 16's name for middleware)
 - **Language**: TypeScript/JavaScript (mixed codebase)
-- **Database**: MongoDB with custom adapter
-- **Authentication**: NextAuth.js with Google/Discord providers
+- **Database**: MongoDB through the official `mongodb` driver (no ODM)
+- **Authentication**: better-auth with Google and Discord sign-in (pinned to an exact version: see the pinned dependency table below)
 - **Media Integration**: TMDB API for external metadata
 - **Testing**: Jest with React Testing Library
 - **Styling**: Tailwind CSS with custom components
@@ -41,9 +41,11 @@ The flat database structure gives better performance with large datasets.
 ### Key Components
 
 #### Authentication System
-- Uses NextAuth.js with MongoDB adapter
-- Custom user approval system (admin-controlled or auto-approval)
-- QR code authentication for mobile devices
+- Uses better-auth (`src/lib/auth.ts`, client in `src/lib/auth-client.ts`) with its MongoDB adapter. With Redis configured, sessions are read from Redis first; MongoDB stays the record
+- Sign-in providers: Google and Discord
+- Plugins: `admin` (roles and the read-only "View as"), `bearer` (device clients send the session token as a Bearer token) and `deviceAuthorization`
+- Custom user approval system (admin-controlled or auto-approval); the admin role follows `ADMIN_USER_EMAILS` at each sign-in
+- Device sign-in for the TV and mobile apps: the app shows a code (also as a QR code) and the user approves it at `/device`
 - Path aliases: `@src/*` and `@components/*`
 
 #### Media Management
@@ -127,9 +129,9 @@ if (canUpdate) {
 - Use path aliases `@src/*` and `@components/*`
 
 ### Environment Configuration
-Create `.env.local` with required variables:
+Create `.env.local` with required variables (`.env.example` lists them all):
 - MongoDB connection and database names
-- NextAuth configuration and provider secrets
+- better-auth settings (`BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`) and the Google/Discord client ids and secrets
 - TMDB integration settings
 - Admin user emails
 - Server URLs and webhook IDs
@@ -277,7 +279,7 @@ const { plan } = await buildWithResources((resources) => planPoster(input, resou
 
 ## Linting and Code Quality
 - ESLint (`eslint.config.js`) covers the whole repo
-- TypeScript strict mode enabled with custom path mappings
+- TypeScript is not fully strict: `strict` is off and `strictNullChecks` is on, and `.js` files are not type-checked (no `checkJs`). Path mappings are in `tsconfig.json`
 - No pre-commit hooks run: lint and test before committing
 
 ## Troubleshooting Sync Issues

@@ -19,7 +19,7 @@ import { getResumePositionForMedia } from '@src/utils/watchHistoryServerUtils'
  * 
  * @param {Object} props
  * @param {Object} props.media - Movie media object
- * @param {Object} props.session - NextAuth session
+ * @param {Object} props.session - better-auth session
  * @param {Object} props.searchParams - URL search parameters (includes start time)
  * @param {Object} props.parsedParams - Parsed URL parameters
  */
