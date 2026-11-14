@@ -31,7 +31,7 @@ import {
   updatePlaylistSorting,
   updatePlaylistCustomOrder,
   WATCHLIST_CONSTANTS,
-  findTMDBIdByMediaId,
+  findLibraryTitleIdentity,
   // Admin user list (the share dialog's picker)
   findUsersForAdmin,
   // Coming Soon management
@@ -377,6 +377,86 @@ export async function DELETE(req) {
   }
 }
 
+// ===== TITLE IDENTITY =====
+
+/**
+ * Which title a request is about, as the keys a watchlist item is stored
+ * under. A title named by TMDB id is that title. One named by mediaId alone
+ * (the id a client holds for a library title) is looked up in the caller's
+ * library: its TMDB id if it has one, otherwise the library's own durable id
+ * for it, so a title without a TMDB id can be on a list too.
+ *
+ * When the library title has both, its library id comes back beside the TMDB
+ * id: an item saved before the title had a TMDB id is still under it, and is
+ * moved to the TMDB key by whoever looks for it next. The library id only
+ * ever comes from the catalog, never from the request.
+ *
+ * @returns {Promise<{ error: Response } | { tmdbId?: number, libraryMediaId?: string }>}
+ */
+async function identifyTitle({ mediaId, tmdbId, mediaType }, user) {
+  if (!mediaId) return { tmdbId }
+
+  if (!mediaType) {
+    if (tmdbId) return { tmdbId }
+    return {
+      error: createErrorResponse('mediaType is required when resolving tmdbId from mediaId', 400, { mediaId }, 'Bad Request', 'MISSING_MEDIA_TYPE'),
+    }
+  }
+
+  const identity = await findLibraryTitleIdentity(mediaId, mediaType, await libraryAccessFor(user))
+  if (!identity) {
+    if (tmdbId) return { tmdbId }
+    return {
+      error: createErrorResponse('tmdbId is required when mediaId cannot be resolved', 400, { mediaId }, 'Bad Request', 'MISSING_TMDB_ID'),
+    }
+  }
+
+  if (tmdbId) {
+    // The library id rides along only when the library agrees which title this is
+    const sameTitle = identity.tmdbId !== null && identity.tmdbId === Number(tmdbId)
+    return { tmdbId, libraryMediaId: (sameTitle && identity.libraryMediaId) || undefined }
+  }
+  if (identity.tmdbId) {
+    return { tmdbId: identity.tmdbId, libraryMediaId: identity.libraryMediaId || undefined }
+  }
+  if (identity.libraryMediaId) {
+    return { libraryMediaId: identity.libraryMediaId }
+  }
+  return {
+    error: createErrorResponse(
+      'This title has no TMDB id and the library has not given it an id of its own yet, so it cannot be added to a list',
+      400,
+      { mediaId },
+      'Bad Request',
+      'MISSING_TITLE_IDENTITY'
+    ),
+  }
+}
+
+/**
+ * The playlist's item for the title a status check or a removal names.
+ *
+ * The library says which title a mediaId is (one read, by the document's
+ * _id): a title with no TMDB id is found under its library id, and one whose
+ * item predates its TMDB id is found there too and moved to the TMDB key
+ * (checkWatchlistStatus). A mediaId the library can't place is looked for as
+ * it always was: by the TMDB id it came with, or failing that as an item that
+ * recorded that mediaId when it was added.
+ */
+async function findRequestedItem({ mediaId, tmdbId, playlistId, mediaType }, user) {
+  // Older web builds send the literal "undefined" for a title with no TMDB id
+  const numericTmdbId = Number.isFinite(parseInt(tmdbId)) ? parseInt(tmdbId) : undefined
+
+  if (mediaId && mediaType) {
+    const identified = await identifyTitle({ mediaId, tmdbId: numericTmdbId, mediaType }, user)
+    if (!identified.error) {
+      return checkWatchlistStatus(mediaId, identified.tmdbId, playlistId, mediaType, identified.libraryMediaId)
+    }
+  }
+
+  return checkWatchlistStatus(mediaId, numericTmdbId, playlistId, mediaType)
+}
+
 // ===== WATCHLIST HANDLERS =====
 
 /**
@@ -392,24 +472,20 @@ async function handleAddToWatchlist(req, body, user) {
   }
 
   try {
-    // Attempt to auto-resolve tmdbId from mediaId if needed
+    // Which title this is: its TMDB id, or for a library title that has
+    // none, the library's own id for it (identifyTitle)
     const url = new URL(req.url)
     const mergedBody = { ...body }
-    if (!mergedBody.tmdbId) {
-      const mediaIdFromUrl = url.searchParams.get('mediaId')
-      const mediaIdCandidate = mergedBody.mediaId || mediaIdFromUrl
-      if (mediaIdCandidate) {
-        if (!mergedBody.mediaType) {
-          return createErrorResponse('mediaType is required when resolving tmdbId from mediaId', 400, { mediaId: mediaIdCandidate }, 'Bad Request', 'MISSING_MEDIA_TYPE')
-        }
-        const resolvedTmdbId = await findTMDBIdByMediaId(mediaIdCandidate, mergedBody.mediaType, await libraryAccessFor(user))
-        if (resolvedTmdbId) {
-          mergedBody.tmdbId = resolvedTmdbId
-        } else {
-          return createErrorResponse('tmdbId is required when mediaId cannot be resolved', 400, { mediaId: mediaIdCandidate }, 'Bad Request', 'MISSING_TMDB_ID')
-        }
-      }
-    }
+    const identified = await identifyTitle(
+      {
+        mediaId: mergedBody.mediaId || url.searchParams.get('mediaId'),
+        tmdbId: mergedBody.tmdbId,
+        mediaType: mergedBody.mediaType,
+      },
+      user
+    )
+    if (identified.error) return identified.error
+    if (identified.tmdbId) mergedBody.tmdbId = identified.tmdbId
 
     // Validate the item data
     const validatedItem = validateWatchlistItem(mergedBody)
@@ -422,6 +498,7 @@ async function handleAddToWatchlist(req, body, user) {
     // Add to watchlist with playlist context
     const addedItem = await addToWatchlist({
       ...validatedItem,
+      libraryMediaId: identified.libraryMediaId,
       playlistId,
       access: await libraryAccessFor(user)
     })
@@ -480,18 +557,33 @@ async function handleToggleWatchlist(req, body, user) {
       tmdbId: body.tmdbId || (tmdbId ? parseInt(tmdbId) : undefined)
     }
     
-    // Attempt to auto-resolve tmdbId if missing but mediaId provided
-    if (!completeItemData.tmdbId && completeItemData.mediaId) {
-      if (!completeItemData.mediaType) {
-        return createErrorResponse('mediaType is required when resolving tmdbId from mediaId', 400, { mediaId: completeItemData.mediaId }, 'Bad Request', 'MISSING_MEDIA_TYPE')
+    // Which title this is: its TMDB id, or for a library title that has
+    // none, the library's own id for it (identifyTitle)
+    const identified = await identifyTitle(completeItemData, user)
+    if (identified.error) {
+      // Not a title the library can place, so there is nothing to add. But a
+      // list shows a title the library doesn't have under its item's own id,
+      // and a toggle that sends that id back is asking to take the item off:
+      // the way a title that has left the library, and has no TMDB id to be
+      // named by, is removed from a list by a client that only toggles.
+      const listed = await checkWatchlistStatus(
+        completeItemData.mediaId,
+        undefined,
+        body.playlistId || null,
+        completeItemData.mediaType
+      )
+      if (!listed) return identified.error
+      if (!(await removeFromWatchlist(listed.id))) {
+        return createErrorResponse('Failed to toggle watchlist status', 500)
       }
-      const resolvedTmdbId = await findTMDBIdByMediaId(completeItemData.mediaId, completeItemData.mediaType, await libraryAccessFor(user))
-      if (resolvedTmdbId) {
-        completeItemData.tmdbId = resolvedTmdbId
-      } else {
-        return createErrorResponse('tmdbId is required when mediaId cannot be resolved', 400, { mediaId: completeItemData.mediaId }, 'Bad Request', 'MISSING_TMDB_ID')
-      }
+      return createSuccessResponse({
+        success: true,
+        action: 'removed',
+        message: 'Item removed from watchlist successfully',
+        item: formatWatchlistItem(listed)
+      }, 200, rateLimitResult.headers)
     }
+    if (identified.tmdbId) completeItemData.tmdbId = identified.tmdbId
 
     debugLog('Complete item data for toggle:', completeItemData)
     
@@ -506,6 +598,7 @@ async function handleToggleWatchlist(req, body, user) {
     // Toggle watchlist status with playlist context
     const result = await toggleWatchlist({
       ...validatedItem,
+      libraryMediaId: identified.libraryMediaId,
       playlistId,
       access: await libraryAccessFor(user)
     })
@@ -633,11 +726,9 @@ async function handleCheckWatchlistStatus(req, user) {
     }
 
     // Check watchlist status with playlist awareness
-    const item = await checkWatchlistStatus(
-      mediaId,
-      tmdbId ? parseInt(tmdbId) : undefined,
-      playlistId === 'default' ? null : playlistId,
-      mediaType
+    const item = await findRequestedItem(
+      { mediaId, tmdbId, playlistId: playlistId === 'default' ? null : playlistId, mediaType },
+      user
     )
     
     // Build response data
@@ -708,7 +799,7 @@ async function handleRemoveFromWatchlist(req, user) {
       success = await removeFromWatchlist(itemId)
     } else if (mediaId || tmdbId) {
       // Find item by media/TMDB ID and remove (with playlist context)
-      const item = await checkWatchlistStatus(mediaId, tmdbId ? parseInt(tmdbId) : undefined, playlistId, mediaType)
+      const item = await findRequestedItem({ mediaId, tmdbId, playlistId, mediaType }, user)
       if (item) {
         success = await removeFromWatchlist(item.id)
       } else {

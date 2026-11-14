@@ -120,4 +120,45 @@ describe('sortDetailUpdates', () => {
     const [update] = sortDetailUpdates([item({ tmdbId: 1, title: 'Old Film' })], gone, now)
     expect(update.updateOne.update).toEqual({ $set: { [DETAILS_RESOLVED_AT]: now } })
   })
+
+  describe('a title with no TMDB id, kept under its library id', () => {
+    const SINTEL = 'mid:e31a15704f374ca9'
+    const libraryItem = (fields) => ({ _id: 'id-sintel', mediaType: 'movie', libraryMediaId: SINTEL, ...fields })
+    const inLibrary = { mediaType: 'movie', tmdbId: null, libraryMediaId: SINTEL, title: 'Sintel', releaseDate: '2010-09-30', posterBlurhash: 'iVBORw0KGgo' }
+
+    it('also stores the poster’s blurhash: all there is to show if the title leaves the library', () => {
+      const updates = sortDetailUpdates([libraryItem({ title: 'Sintel' })], new Map([[`movie:${SINTEL}`, inLibrary]]), now)
+      expect(updates).toEqual([
+        {
+          updateOne: {
+            filter: { _id: 'id-sintel' },
+            update: {
+              $set: { title: 'Sintel', releaseDate: '2010-09-30', posterBlurhash: 'iVBORw0KGgo', [DETAILS_RESOLVED_AT]: now },
+            },
+          },
+        },
+      ])
+    })
+
+    it('writes nothing once the item holds them', () => {
+      const upToDate = libraryItem({ title: 'Sintel', releaseDate: '2010-09-30', posterBlurhash: 'iVBORw0KGgo', [DETAILS_RESOLVED_AT]: now })
+      expect(sortDetailUpdates([upToDate], new Map([[`movie:${SINTEL}`, inLibrary]]))).toEqual([])
+    })
+
+    it('keeps everything the item stored when the title has left the library, and only marks it', () => {
+      const gone = new Map([[`movie:${SINTEL}`, { mediaType: 'movie', libraryMediaId: SINTEL, libraryMissing: true, title: 'No longer in the library', posterBlurhash: null }]])
+      const stored = libraryItem({ title: 'Sintel', releaseDate: '2010-09-30', posterBlurhash: 'iVBORw0KGgo' })
+      const [update] = sortDetailUpdates([stored], gone, now)
+      expect(update.updateOne.update).toEqual({ $set: { [DETAILS_RESOLVED_AT]: now } })
+    })
+
+    it('stores no blurhash on a TMDB-keyed item, which has TMDB to show it from', () => {
+      const [update] = sortDetailUpdates(
+        [item({ tmdbId: 1 })],
+        resolved([{ tmdbId: 1, title: 'Alien', releaseDate: '1979-05-25', posterBlurhash: 'iVBORw0KGgo' }]),
+        now
+      )
+      expect(update.updateOne.update.$set).not.toHaveProperty('posterBlurhash')
+    })
+  })
 })

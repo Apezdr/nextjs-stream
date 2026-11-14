@@ -34,8 +34,21 @@ function ReorderButton({ icon: Icon, label, description, onClick, busy }) {
 function describe(item) {
   const type = item.mediaType === 'movie' ? 'Movie' : item.mediaType === 'tv' ? 'TV Show' : null
   const year = item.releaseDate ? new Date(item.releaseDate).getFullYear() : null
-  const availability = item.url ? 'Available now' : 'Not available yet'
+  const availability = item.url
+    ? 'Available now'
+    : item.libraryMissing
+      ? 'No longer in the library'
+      : 'Not available yet'
   return [type, Number.isFinite(year) ? year : null, availability].filter(Boolean).join(' · ')
+}
+
+/**
+ * Whether "Coming Soon" can be set on an item: by an admin, on a title that
+ * isn't available, and only one with a TMDB id, which is what Coming Soon is
+ * kept by. A library title with no TMDB id can't carry it.
+ */
+export function comingSoonAllowed(item, isAdmin) {
+  return Boolean(isAdmin && !item.isAvailable && item.tmdbId)
 }
 
 /**
@@ -69,6 +82,7 @@ export default function ItemActionSheet({
   onOpenArr,
 }) {
   const iconClass = 'h-5 w-5'
+  const canMarkComingSoon = comingSoonAllowed(item, isAdmin)
 
   return (
     <BottomSheet open={open} onClose={onClose} afterLeave={afterLeave} title={item.title} description={describe(item)}>
@@ -112,16 +126,16 @@ export default function ItemActionSheet({
         )}
         {/* Radarr/Sonarr for anyone whose roles allow it (the card decides, as
             in its desktop menu: arrActionLabel is null otherwise); Coming Soon
-            is admin-only, and only for unavailable titles */}
-        {(arrActionLabel || (isAdmin && !item.isAvailable)) && (
+            is admin-only, and only for unavailable titles that have a TMDB
+            id to keep it by (comingSoonAllowed) */}
+        {(arrActionLabel || canMarkComingSoon) && (
           <div className="mt-1 border-t border-gray-700 pt-1">
             {arrActionLabel && (
               <SheetAction onClick={onOpenArr} tone="accent" icon={<ArrowDownTrayIcon className={iconClass} />}>
                 {arrActionLabel}
               </SheetAction>
             )}
-            {isAdmin &&
-              !item.isAvailable &&
+            {canMarkComingSoon &&
               (item.comingSoon ? (
                 <SheetAction onClick={onRemoveComingSoon} tone="warning" icon={<XCircleIcon className={iconClass} />}>
                   Remove &quot;Coming Soon&quot;

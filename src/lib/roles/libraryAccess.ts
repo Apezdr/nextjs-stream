@@ -47,6 +47,8 @@ interface CatalogTitle {
   id: string
   originalTitle: string | null
   tmdbId: number | null
+  /** The title's durable library id ('mid:…'): what a watchlist item is keyed on when there is no TMDB id. */
+  mediaId: string | null
   rating: string | null
 }
 interface Catalog {
@@ -60,7 +62,7 @@ let catalog: { at: number; value: Promise<Catalog> } | null = null
 async function readCatalog(): Promise<Catalog> {
   const db = (await clientPromise).db('Media')
   // library-scope: the catalog every scope is classified from, by scopeRule
-  const projection = { projection: { _id: 1, originalTitle: 1, 'metadata.id': 1, 'metadata.rating': 1 } }
+  const projection = { projection: { _id: 1, originalTitle: 1, mediaId: 1, 'metadata.id': 1, 'metadata.rating': 1 } }
   const [movies, shows] = await Promise.all([
     db.collection('FlatMovies').find({}, projection).toArray(),
     db.collection('FlatTVShows').find({}, projection).toArray(),
@@ -69,6 +71,7 @@ async function readCatalog(): Promise<Catalog> {
     id: String(doc._id),
     originalTitle: typeof doc.originalTitle === 'string' ? doc.originalTitle : null,
     tmdbId: Number.isFinite(doc.metadata?.id) ? doc.metadata.id : null,
+    mediaId: typeof doc.mediaId === 'string' && doc.mediaId.startsWith('mid:') ? doc.mediaId : null,
     rating: typeof doc.metadata?.rating === 'string' ? doc.metadata.rating : null,
   })
   return { movies: movies.map(shape), shows: shows.map(shape) }
@@ -96,6 +99,12 @@ export interface ScopeIndex {
   showKeys: Set<string>
   /** TMDB ids of library titles none of whose documents is in scope, by type. */
   hiddenTmdbIds: { movie: number[]; tv: number[] }
+  /**
+   * Library ids ('mid:…') of the titles out of scope, by type: what hides a
+   * watchlist item keyed on its library id (a title with no TMDB id when it
+   * was added).
+   */
+  hiddenMediaIds: { movie: string[]; tv: string[] }
 }
 
 const indexByScope = new Map<string, { catalog: Catalog; index: ScopeIndex }>()
@@ -110,7 +119,11 @@ function buildIndex(scope: LibraryScope, { movies, shows }: Catalog): ScopeIndex
     // A TMDB id with any document in scope stays: it is the viewer's
     const heldIds = new Set(held.map((title) => title.tmdbId))
     const hidden = [...new Set(left.map((title) => title.tmdbId).filter((id) => id !== null && !heldIds.has(id)))]
-    return { held, hidden: hidden as number[] }
+    // A library id belongs to one document, so there is no "any document in
+    // scope" to weigh. Every title out of scope is listed, with or without a
+    // TMDB id: an item added before its title got one is still keyed on this.
+    const hiddenMediaIds = left.flatMap((title) => (title.mediaId ? [title.mediaId] : []))
+    return { held, hidden: hidden as number[], hiddenMediaIds }
   }
   const movieSide = classify(movies, rule.movie)
   const showSide = classify(shows, rule.show)
@@ -120,6 +133,7 @@ function buildIndex(scope: LibraryScope, { movies, shows }: Catalog): ScopeIndex
     movieKeys: keys(movieSide.held),
     showKeys: keys(showSide.held),
     hiddenTmdbIds: { movie: movieSide.hidden, tv: showSide.hidden },
+    hiddenMediaIds: { movie: movieSide.hiddenMediaIds, tv: showSide.hiddenMediaIds },
   }
 }
 

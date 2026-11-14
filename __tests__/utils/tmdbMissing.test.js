@@ -4,9 +4,12 @@
  * TMDB_NOT_FOUND, and only from that.
  */
 import {
+  LIBRARY_MISSING_TITLE,
   TMDB_MISSING_TITLE,
   asResolvedMedia,
+  isMissingTitle,
   isTmdbNotFound,
+  missingFromLibraryMedia,
   missingFromTmdbMedia,
   untitledLabel,
 } from '@src/utils/watchlist/tmdbMissing'
@@ -67,5 +70,40 @@ describe('reading a resolver entry', () => {
   it('labels an item with no title of its own', () => {
     expect(untitledLabel(placeholder)).toBe('No longer on TMDB')
     expect(untitledLabel(undefined)).toBe('Unknown Title')
+  })
+})
+
+describe('a title with no TMDB id that has left the library', () => {
+  const SINTEL = 'mid:e31a15704f374ca9'
+  const placeholder = missingFromLibraryMedia(SINTEL, 'movie')
+
+  it('says so, keeps what identifies it, and has nothing to open', () => {
+    expect(LIBRARY_MISSING_TITLE).toBe('No longer in the library')
+    expect(placeholder).toMatchObject({
+      tmdbId: null,
+      libraryMediaId: SINTEL,
+      mediaType: 'movie',
+      title: LIBRARY_MISSING_TITLE,
+      libraryMissing: true,
+      posterURL: '/sorry-image-not-available.jpg',
+      isInternal: false,
+      // Not a TMDB title either: there is no TMDB entry behind it
+      isExternal: false,
+      isAvailable: false,
+      url: null,
+      link: null,
+    })
+  })
+
+  it('reads as unresolved, so the fallbacks use what the item stored, and as a missing title', () => {
+    expect(asResolvedMedia(placeholder)).toBeNull()
+    expect(isMissingTitle(placeholder)).toBe(true)
+    expect(isMissingTitle(missingFromTmdbMedia(275188, 'tv'))).toBe(true)
+    expect(isMissingTitle({ tmdbId: 603, mediaType: 'movie', title: 'The Matrix' })).toBe(false)
+    expect(isMissingTitle(undefined)).toBe(false)
+  })
+
+  it('labels an item with no title of its own', () => {
+    expect(untitledLabel(placeholder)).toBe('No longer in the library')
   })
 })

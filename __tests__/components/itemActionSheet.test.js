@@ -21,7 +21,7 @@ jest.mock('@components/Watchlist/BottomSheet', () => ({
 
 const ItemActionSheet = require('@components/Watchlist/ItemActionSheet').default
 
-const unavailableMovie = { id: 'i1', title: 'A title', mediaType: 'movie', isAvailable: false, comingSoon: false }
+const unavailableMovie = { id: 'i1', tmdbId: 603, title: 'A title', mediaType: 'movie', isAvailable: false, comingSoon: false }
 
 function renderSheet(props) {
   const noop = () => {}
@@ -67,5 +67,21 @@ describe('ItemActionSheet', () => {
 
     renderSheet({ isAdmin: true, arrActionLabel: null, item: { ...unavailableMovie, isAvailable: true, url: '/list/movie/x' } })
     expect(screen.queryByRole('button', { name: /Coming Soon/ })).toBeNull()
+  })
+
+  it('offers no Coming Soon for a title with no TMDB id: that is what Coming Soon is kept by', () => {
+    const removedLibraryTitle = {
+      id: 'i2',
+      tmdbId: null,
+      libraryMediaId: 'mid:00000000000000aa',
+      libraryMissing: true,
+      title: 'A removed title',
+      mediaType: 'movie',
+      isAvailable: false,
+    }
+    renderSheet({ isAdmin: true, arrActionLabel: null, item: removedLibraryTitle })
+    expect(screen.queryByRole('button', { name: /Coming Soon/ })).toBeNull()
+    // It can still be taken off the list
+    expect(screen.getByRole('button', { name: 'Remove from watchlist' })).toBeTruthy()
   })
 })

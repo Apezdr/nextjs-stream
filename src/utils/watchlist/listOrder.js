@@ -12,7 +12,8 @@
  * async functions.
  */
 
-import { titleKey } from './playlistMerge.js'
+import { isLibraryMediaId, titleKey } from './playlistMerge.js'
+import { isMissingTitle } from './tmdbMissing.js'
 
 /** The sorts that read the stored details; date added and custom order don't. */
 export const SORTS_NEEDING_DETAILS = new Set(['title', 'releaseDate'])
@@ -122,10 +123,24 @@ export function sortDetailsFrom(media) {
 }
 
 /**
+ * What a library-keyed item (a title with no TMDB id) keeps besides its sort
+ * details: the poster's blurhash. If the title leaves the library there is no
+ * TMDB entry to show in its place, and the poster file goes with it; the
+ * stored title, release date and this are what the item is shown from.
+ * @param {Object} item - Watchlist document
+ * @param {Object} media - A batchResolveMedia entry that describes the title
+ * @returns {{ posterBlurhash?: string|null }}
+ */
+function keepsakeFrom(item, media) {
+  if (item.tmdbId != null || !isLibraryMediaId(item.libraryMediaId)) return {}
+  return { posterBlurhash: typeof media?.posterBlurhash === 'string' ? media.posterBlurhash : null }
+}
+
+/**
  * bulkWrite updates that bring items' stored details in line with what they
  * resolved to. An item whose lookup failed is left out, so it's looked up
- * again next time; one TMDB no longer has keeps whatever it stored, and is
- * only marked, so sorting stops looking it up.
+ * again next time; one whose title is gone (from TMDB, or from the library)
+ * keeps whatever it stored, and is only marked, so sorting stops looking it up.
  * @param {Object[]} items - Watchlist documents
  * @param {Map} resolvedMedia - From batchResolveMedia, keyed by titleKey ("movie:603")
  * @param {Date} [now]
@@ -137,7 +152,7 @@ export function sortDetailUpdates(items, resolvedMedia, now = new Date()) {
     const entry = resolvedMedia.get(titleKey(item))
     if (!entry) continue
 
-    const details = entry.tmdbNotFound ? {} : sortDetailsFrom(entry)
+    const details = isMissingTitle(entry) ? {} : { ...sortDetailsFrom(entry), ...keepsakeFrom(item, entry) }
     const changed = Object.entries(details).some(([field, value]) => (item[field] ?? null) !== value)
     if (!changed && item[DETAILS_RESOLVED_AT]) continue
 

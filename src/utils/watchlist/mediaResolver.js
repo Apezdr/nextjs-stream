@@ -10,19 +10,94 @@ import 'server-only'
 import { cache } from 'react'
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
-import { isTmdbNotFound, missingFromTmdbMedia } from './tmdbMissing.js'
+import { isTmdbNotFound, missingFromLibraryMedia, missingFromTmdbMedia } from './tmdbMissing.js'
 import { fetchTmdbFromBackend } from '@src/utils/tmdb/backendClient'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { libraryMovieFilter, libraryShowFilter } from '@src/utils/mediaVisibility'
 import { assertLibraryAccess } from '@src/lib/roles/libraryScope'
-import { titleKey } from './playlistMerge.js'
+import { isLibraryMediaId, titleKey } from './playlistMerge.js'
 import { createLogger, logError } from '@src/lib/logger'
 
 const log = createLogger('MediaResolver')
 
 // A title's key in every map and set here: TMDB ids repeat across media types
 // (movie 1399 and show 1399 are different titles), so the type is part of it.
+// A title with no TMDB id is asked for, and answered, under its library id.
 const keyOf = (mediaType, tmdbId) => titleKey({ mediaType, tmdbId })
+const libraryKeyOf = (mediaType, libraryMediaId) => titleKey({ mediaType, libraryMediaId })
+
+// Asked for by library id: a title with no TMDB id
+const byLibraryId = (item) => item.tmdbId == null && isLibraryMediaId(item.libraryMediaId)
+
+const LIBRARY_COLLECTION = { movie: 'FlatMovies', tv: 'FlatTVShows' }
+
+// What a resolved library title is built from
+const SHARED_PROJECTION = {
+  _id: 1,
+  mediaId: 1,
+  title: 1,
+  originalTitle: 1,
+  posterURL: 1,
+  posterBlurhash: 1,
+  backdrop: 1,
+  backdropBlurhash: 1,
+  'metadata.id': 1,
+  'metadata.poster_path': 1,
+  'metadata.backdrop_path': 1,
+  'metadata.overview': 1,
+  'metadata.genres': 1,
+  'metadata.vote_average': 1,
+}
+const LIBRARY_PROJECTION = {
+  movie: { ...SHARED_PROJECTION, 'metadata.release_date': 1 },
+  tv: { ...SHARED_PROJECTION, 'metadata.first_air_date': 1 },
+}
+
+/**
+ * The library titles asked for, by TMDB id or by library id, among the ones
+ * the viewer can see. Web-hidden titles are left out, so they resolve as if
+ * the library didn't have them. Same visibility rule as getUserWatchlist's
+ * availability check: the two must agree, or items oscillate.
+ */
+async function findLibraryTitles(db, mediaType, { tmdbIds, libraryMediaIds }, access) {
+  const asked = []
+  if (tmdbIds.length > 0) asked.push({ 'metadata.id': { $in: tmdbIds } })
+  if (libraryMediaIds.length > 0) asked.push({ mediaId: { $in: libraryMediaIds } })
+  if (asked.length === 0) return []
+
+  const visible = mediaType === 'movie' ? libraryMovieFilter(access) : libraryShowFilter(access)
+  return db
+    .collection(LIBRARY_COLLECTION[mediaType])
+    .find({ $and: [asked.length === 1 ? asked[0] : { $or: asked }, visible] }, { projection: LIBRARY_PROJECTION[mediaType] })
+    .toArray()
+}
+
+/** A library title as resolved media. */
+function libraryMedia(document, mediaType) {
+  const { metadata } = document
+  return {
+    tmdbId: metadata?.id ?? null,
+    mediaType,
+    currentMediaId: document._id.toString(),
+    title: document.title,
+    originalTitle: document.originalTitle || null,
+    posterURL: document.posterURL || (metadata?.poster_path
+      ? getFullImageUrl(metadata.poster_path, 'w500')
+      : '/sorry-image-not-available.jpg'),
+    posterBlurhash: document.posterBlurhash,
+    backdropURL: document.backdrop || (metadata?.backdrop_path
+      ? getFullImageUrl(metadata.backdrop_path, 'original')
+      : null),
+    backdropBlurhash: document.backdropBlurhash,
+    overview: metadata?.overview,
+    releaseDate: mediaType === 'movie' ? metadata?.release_date : metadata?.first_air_date,
+    genres: metadata?.genres || [],
+    voteAverage: metadata?.vote_average,
+    isInternal: true,
+    url: `/list/${mediaType}/${encodeURIComponent(mediaLinkKey(document))}`,
+    link: encodeURIComponent(mediaLinkKey(document))
+  }
+}
 
 /**
  * Internal implementation (not cached) - does the actual work
@@ -33,225 +108,91 @@ async function batchResolveMediaInternal(items, options = {}) {
   // didn't have it (a TMDB-only card, nothing that plays)
   const { access } = options
   assertLibraryAccess(access)
-  
+
   // Convert Array back to Set if needed (from JSON deserialization)
   if (precomputedAvailability && Array.isArray(precomputedAvailability)) {
     precomputedAvailability = new Set(precomputedAvailability)
   }
-  
+
   log.debug({ itemCount: items.length }, 'Resolving media batch')
-  
+
   const results = new Map()
   const uniqueItems = new Map()
-  
+
   // Deduplicate items
   for (const item of items) {
-    const key = keyOf(item.mediaType, item.tmdbId)
+    const key = titleKey(item)
     if (!uniqueItems.has(key)) {
       uniqueItems.set(key, item)
     }
   }
-  
+
   const itemsArray = Array.from(uniqueItems.values())
-  
-  // Group by media type for efficient DB queries
-  const movieTmdbIds = itemsArray
-    .filter(item => item.mediaType === 'movie')
-    .map(item => parseInt(item.tmdbId))
-  
-  const tvTmdbIds = itemsArray
-    .filter(item => item.mediaType === 'tv')
-    .map(item => parseInt(item.tmdbId))
+
+  // What to ask the library for, by media type. With pre-computed availability
+  // (an optimization that avoids duplicate queries), only the titles already
+  // known to be there are asked for.
+  const wanted = {
+    movie: { tmdbIds: [], libraryMediaIds: [] },
+    tv: { tmdbIds: [], libraryMediaIds: [] },
+  }
+  for (const item of itemsArray) {
+    const side = wanted[item.mediaType]
+    if (!side) continue
+    if (precomputedAvailability && !precomputedAvailability.has(titleKey(item))) continue
+    if (byLibraryId(item)) {
+      side.libraryMediaIds.push(item.libraryMediaId)
+    } else if (Number.isFinite(parseInt(item.tmdbId))) {
+      side.tmdbIds.push(parseInt(item.tmdbId))
+    }
+  }
 
   let movies = []
   let tvShows = []
-
-  // Use pre-computed availability if provided (optimization to avoid duplicate queries)
-  if (precomputedAvailability) {
-    // Filter to only query items we know are available
-    const availableMovieIds = movieTmdbIds.filter(id => precomputedAvailability.has(keyOf('movie', id)))
-    const availableTvIds = tvTmdbIds.filter(id => precomputedAvailability.has(keyOf('tv', id)))
-    
-    if (availableMovieIds.length === 0 && availableTvIds.length === 0) {
-      // No items are available in library, skip DB queries entirely
-      movies = []
-      tvShows = []
-    } else {
-      // Query only the items we know exist
-      const client = await clientPromise
-      const db = client.db('Media')
-      
-      // Web-hidden titles are excluded so they resolve as external TMDB cards
-      ;[movies, tvShows] = await Promise.all([
-        availableMovieIds.length > 0
-          ? db.collection('FlatMovies').find(
-              { $and: [{ 'metadata.id': { $in: availableMovieIds } }, libraryMovieFilter(access)] },
-              {
-                projection: {
-                  _id: 1,
-                  title: 1,
-                  originalTitle: 1,
-                  posterURL: 1,
-                  posterBlurhash: 1,
-                  backdrop: 1,
-                  backdropBlurhash: 1,
-                  'metadata.id': 1,
-                  'metadata.poster_path': 1,
-                  'metadata.backdrop_path': 1,
-                  'metadata.overview': 1,
-                  'metadata.release_date': 1,
-                  'metadata.genres': 1,
-                  'metadata.vote_average': 1
-                }
-              }
-            ).toArray()
-          : [],
-        
-        availableTvIds.length > 0
-          ? db.collection('FlatTVShows').find(
-              { $and: [{ 'metadata.id': { $in: availableTvIds } }, libraryShowFilter(access)] },
-              {
-                projection: {
-                  _id: 1,
-                  title: 1,
-                  originalTitle: 1,
-                  posterURL: 1,
-                  posterBlurhash: 1,
-                  backdrop: 1,
-                  backdropBlurhash: 1,
-                  'metadata.id': 1,
-                  'metadata.poster_path': 1,
-                  'metadata.backdrop_path': 1,
-                  'metadata.overview': 1,
-                  'metadata.first_air_date': 1,
-                  'metadata.genres': 1,
-                  'metadata.vote_average': 1
-                }
-              }
-            ).toArray()
-          : []
-      ])
-    }
-  } else {
-    // Fallback: fetch from database without pre-computed data
+  const anythingWanted = Object.values(wanted).some(
+    (side) => side.tmdbIds.length > 0 || side.libraryMediaIds.length > 0
+  )
+  if (anythingWanted) {
     const client = await clientPromise
     const db = client.db('Media')
-    
-    // Same visibility rule as the precomputed path — the two must agree
     ;[movies, tvShows] = await Promise.all([
-      movieTmdbIds.length > 0
-        ? db.collection('FlatMovies').find(
-            { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, libraryMovieFilter(access)] },
-            {
-              projection: {
-                _id: 1,
-                title: 1,
-                originalTitle: 1,
-                posterURL: 1,
-                posterBlurhash: 1,
-                backdrop: 1,
-                backdropBlurhash: 1,
-                'metadata.id': 1,
-                'metadata.poster_path': 1,
-                'metadata.backdrop_path': 1,
-                'metadata.overview': 1,
-                'metadata.release_date': 1,
-                'metadata.genres': 1,
-                'metadata.vote_average': 1
-              }
-            }
-          ).toArray()
-        : [],
-      
-      tvTmdbIds.length > 0
-        ? db.collection('FlatTVShows').find(
-            { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, libraryShowFilter(access)] },
-            {
-              projection: {
-                _id: 1,
-                title: 1,
-                originalTitle: 1,
-                posterURL: 1,
-                posterBlurhash: 1,
-                backdrop: 1,
-                backdropBlurhash: 1,
-                'metadata.id': 1,
-                'metadata.poster_path': 1,
-                'metadata.backdrop_path': 1,
-                'metadata.overview': 1,
-                'metadata.first_air_date': 1,
-                'metadata.genres': 1,
-                'metadata.vote_average': 1
-              }
-            }
-          ).toArray()
-        : []
+      findLibraryTitles(db, 'movie', wanted.movie, access),
+      findLibraryTitles(db, 'tv', wanted.tv, access),
     ])
   }
 
   // Process internal media (available in our library)
   const foundKeys = new Set()
-  
-  for (const movie of movies) {
-    const tmdbId = movie.metadata?.id
-    if (tmdbId) {
-      foundKeys.add(keyOf('movie', tmdbId))
-      results.set(keyOf('movie', tmdbId), {
-        tmdbId,
-        mediaType: 'movie',
-        currentMediaId: movie._id.toString(),
-        title: movie.title,
-        originalTitle: movie.originalTitle || null,
-        posterURL: movie.posterURL || (movie.metadata?.poster_path
-          ? getFullImageUrl(movie.metadata.poster_path, 'w500')
-          : '/sorry-image-not-available.jpg'),
-        posterBlurhash: movie.posterBlurhash,
-        backdropURL: movie.backdrop || (movie.metadata?.backdrop_path
-          ? getFullImageUrl(movie.metadata.backdrop_path, 'original')
-          : null),
-        backdropBlurhash: movie.backdropBlurhash,
-        overview: movie.metadata?.overview,
-        releaseDate: movie.metadata?.release_date,
-        genres: movie.metadata?.genres || [],
-        voteAverage: movie.metadata?.vote_average,
-        isInternal: true,
-        url: `/list/movie/${encodeURIComponent(mediaLinkKey(movie))}`,
-        link: encodeURIComponent(mediaLinkKey(movie))
-      })
+
+  for (const [mediaType, documents] of [['movie', movies], ['tv', tvShows]]) {
+    const askedLibraryIds = new Set(wanted[mediaType].libraryMediaIds)
+    for (const document of documents) {
+      const media = libraryMedia(document, mediaType)
+      if (media.tmdbId) {
+        foundKeys.add(keyOf(mediaType, media.tmdbId))
+        results.set(keyOf(mediaType, media.tmdbId), media)
+      }
+      if (askedLibraryIds.has(document.mediaId)) {
+        const key = libraryKeyOf(mediaType, document.mediaId)
+        foundKeys.add(key)
+        // Carries the TMDB id the title has been given since it was added, if
+        // any: the item's cue to move to the TMDB key (promoteToTmdbKey)
+        results.set(key, { ...media, libraryMediaId: document.mediaId })
+      }
     }
   }
-  
-  for (const show of tvShows) {
-    const tmdbId = show.metadata?.id
-    if (tmdbId) {
-      foundKeys.add(keyOf('tv', tmdbId))
-      results.set(keyOf('tv', tmdbId), {
-        tmdbId,
-        mediaType: 'tv',
-        currentMediaId: show._id.toString(),
-        title: show.title,
-        originalTitle: show.originalTitle || null,
-        posterURL: show.posterURL || (show.metadata?.poster_path 
-          ? getFullImageUrl(show.metadata.poster_path, 'w500') 
-          : '/sorry-image-not-available.jpg'),
-        posterBlurhash: show.posterBlurhash,
-        backdropURL: show.backdrop || (show.metadata?.backdrop_path 
-          ? getFullImageUrl(show.metadata.backdrop_path, 'original') 
-          : null),
-        backdropBlurhash: show.backdropBlurhash,
-        overview: show.metadata?.overview,
-        releaseDate: show.metadata?.first_air_date,
-        genres: show.metadata?.genres || [],
-        voteAverage: show.metadata?.vote_average,
-        isInternal: true,
-        url: `/list/tv/${encodeURIComponent(mediaLinkKey(show))}`,
-        link: encodeURIComponent(mediaLinkKey(show))
-      })
+
+  // A title asked for by library id that the library doesn't have has nowhere
+  // else to come from: it resolves to the placeholder that says so. The query
+  // above ran and didn't find it; a query that fails throws instead.
+  for (const item of itemsArray) {
+    if (byLibraryId(item) && !foundKeys.has(titleKey(item))) {
+      results.set(titleKey(item), missingFromLibraryMedia(item.libraryMediaId, item.mediaType))
     }
   }
 
   // For items not found in our library, fetch directly from TMDB
-  const externalItems = itemsArray.filter(item => !foundKeys.has(keyOf(item.mediaType, item.tmdbId)))
+  const externalItems = itemsArray.filter(item => !byLibraryId(item) && !foundKeys.has(keyOf(item.mediaType, item.tmdbId)))
   
   if (externalItems.length > 0) {
     log.debug({ externalCount: externalItems.length }, 'Fetching external items from TMDB')
@@ -415,9 +356,10 @@ const batchResolveMediaCached = cache(async function batchResolveMediaCached(ite
 
 /**
  * Public API - convenience wrapper that handles JSON serialization
- * @param {Array} items - Array of {tmdbId, mediaType} objects  
+ * @param {Array} items - Array of {tmdbId, mediaType} objects, or {libraryMediaId, mediaType} for a title with no TMDB id
  * @param {Object} options - `access` (required): the viewer's LibraryAccess. `precomputedAvailability` is a Set of titleKey()s ("movie:603") known to be in the library
- * @returns {Promise<Map>} Map of titleKey ("movie:603", "tv:1399") -> media data. Keyed by type too: TMDB ids repeat across media types
+ * @returns {Promise<Map>} Map of titleKey ("movie:603", "tv:1399", "movie:mid:…") -> media data. Keyed by type too: TMDB ids repeat across media types.
+ *   A title asked for by library id that the library no longer has maps to a `libraryMissing` placeholder (tmdbMissing.js)
  */
 export async function batchResolveMedia(items, options) {
   // Convert Set to Array for JSON serialization

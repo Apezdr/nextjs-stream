@@ -431,7 +431,11 @@ export function sanitizeCardData(item, popup = false, context = {}) {
     if (isTrailer) sanitized.isTrailer = isTrailer
     if (isExternal) sanitized.isExternal = isExternal
     if (externalSource) sanitized.externalSource = externalSource
-    
+    // A playlist title with no TMDB id that has left the library (see
+    // watchlist/tmdbMissing.js): there is nothing to open and no TMDB details
+    // to fetch, so the card says so instead of "Not Available"
+    if (item.libraryMissing) sanitized.libraryMissing = true
+
     // CRITICAL: Always preserve metadata for TMDB-only items (moved from try block)
     if (metadata) {
       sanitized.metadata = metadata

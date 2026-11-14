@@ -58,10 +58,22 @@ const toggleFetcher = async (url, { arg: body }) => {
     body: JSON.stringify(body)
   })
   if (!res.ok) {
-    const err = await res.json()
-    throw new Error(err.error || res.statusText)
+    // The message says what went wrong; `error` is only the status text
+    // ("Bad Request"), which is what the toast used to show
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.message || err.error || res.statusText)
   }
   return res.json()
+}
+
+// The status query for a title. Only the ids the title has: a library title
+// with no TMDB id used to be asked for as the literal "tmdbId=undefined".
+function statusParams(mediaId, tmdbId, mediaType) {
+  const params = new URLSearchParams({ action: 'status' })
+  if (mediaId) params.set('mediaId', mediaId)
+  if (tmdbId) params.set('tmdbId', tmdbId.toString())
+  if (mediaType) params.set('mediaType', mediaType)
+  return params.toString()
 }
 
 /**
@@ -88,7 +100,7 @@ export default function WatchlistButton({
   // Build the SWR key - all instances with same mediaId/tmdbId share this cache entry.
   // mediaType too: TMDB ids repeat across movies and TV, and the toggle keys on both.
   const statusKey = session
-    ? `/api/authenticated/watchlist?action=status&mediaId=${mediaId}&tmdbId=${tmdbId}${mediaType ? `&mediaType=${mediaType}` : ''}`
+    ? `/api/authenticated/watchlist?${statusParams(mediaId, tmdbId, mediaType)}`
     : null
 
   // Fetch watchlist status - shared across all instances
@@ -166,7 +178,9 @@ export default function WatchlistButton({
       body.posterURL = posterURL
     }
 
-    await toggle(body)
+    // A failed toggle is reported by onError above. trigger() also rejects, and
+    // left uncaught that surfaced as an unhandled error on every refused add.
+    await toggle(body).catch(() => {})
   }
 
   // While loading session or status

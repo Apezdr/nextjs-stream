@@ -87,6 +87,10 @@ const Card = ({
   isAvailable = true,
   comingSoon = false,
   comingSoonDate = null,
+  // A playlist title with no TMDB id that has left the library: the card
+  // says so, and has no details to open (the popup reads them from the
+  // library or from TMDB, and this title is in neither)
+  libraryMissing = false,
   metadata = null,
   // Trailer/External video flags
   isTrailer = false,
@@ -328,11 +332,12 @@ const Card = ({
   const handleExpand = useCallback(() => {
     if (isAnimating) return
     if (isPeek) return
+    if (libraryMissing) return
     dispatchInteraction({ type: 'SET_ANIMATING', value: true })
     onExpand(itemId)
     calculateImagePosition()
     dispatchInteraction({ type: 'SET_PORTAL', value: true })
-  }, [isAnimating, isPeek, onExpand, itemId, calculateImagePosition])
+  }, [isAnimating, isPeek, libraryMissing, onExpand, itemId, calculateImagePosition])
 
   const handleCollapse = useCallback(() => {
     if (isAnimating) return
@@ -595,7 +600,7 @@ const Card = ({
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
                       </svg>
-                      <span>Not Available</span>
+                      <span>{libraryMissing ? 'No Longer in Library' : 'Not Available'}</span>
                     </div>
                   )}
                 </div>

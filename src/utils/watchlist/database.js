@@ -5,8 +5,8 @@ import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { batchResolveMedia } from './mediaResolver.js'
-import { titleKey } from './playlistMerge.js'
-import { asResolvedMedia, untitledLabel } from './tmdbMissing.js'
+import { isLibraryMediaId, titleKey } from './playlistMerge.js'
+import { LIBRARY_MISSING_TITLE, asResolvedMedia, untitledLabel } from './tmdbMissing.js'
 import {
   DETAILS_RESOLVED_AT,
   SORTS_NEEDING_DETAILS,
@@ -194,12 +194,15 @@ async function getOwnerNameMap(ownerIds = []) {
  * Supports both internal media (in library) and external media (TMDB only)
  */
 
-// The hidden TMDB ids of a scope's index as sets, once per index
+// The hidden TMDB ids and library ids of a scope's index as sets, once per index
 const hiddenSetsByIndex = new WeakMap()
 function hiddenSetsOf(index) {
   let sets = hiddenSetsByIndex.get(index)
   if (!sets) {
-    sets = { movie: new Set(index.hiddenTmdbIds.movie), tv: new Set(index.hiddenTmdbIds.tv) }
+    sets = {
+      tmdb: { movie: new Set(index.hiddenTmdbIds.movie), tv: new Set(index.hiddenTmdbIds.tv) },
+      library: { movie: new Set(index.hiddenMediaIds.movie), tv: new Set(index.hiddenMediaIds.tv) },
+    }
     hiddenSetsByIndex.set(index, sets)
   }
   return sets
@@ -208,11 +211,12 @@ function hiddenSetsOf(index) {
 /**
  * The items matching `filter` that the viewer's scope hides: library titles
  * outside it, left out of the viewer's lists and counts as if never added,
- * whoever added them. A title the library doesn't have (TMDB-only) isn't the
- * library's to hide, so it stays. Worked out in memory against the scope's
- * index (libraryAccess.ts) over the playlist's own items, read once with
- * their type and TMDB id only: what this reads and the $nin it returns grow
- * with the playlist, never with the library.
+ * whoever added them. A title the library doesn't have (TMDB-only, or one
+ * kept under its library id after it left) isn't the library's to hide, so it
+ * stays. Worked out in memory against the scope's index (libraryAccess.ts)
+ * over the playlist's own items, read once with their type and their TMDB or
+ * library id only: what this reads and the $nin it returns grow with the
+ * playlist, never with the library.
  *
  * Null for the whole library, with no read: its queries stay as they were.
  * Otherwise { total, hiddenIds }, so a count needs no query of its own.
@@ -221,10 +225,16 @@ async function hiddenItems(collection, filter, access) {
   const index = await libraryScopeIndex(access)
   if (!index) return null
   const sets = hiddenSetsOf(index)
-  const items = await collection.find(filter, { projection: { _id: 1, mediaType: 1, tmdbId: 1 } }).toArray()
-  // Items store the TMDB id as a number, some older ones as a string
+  const items = await collection
+    .find(filter, { projection: { _id: 1, mediaType: 1, tmdbId: 1, libraryMediaId: 1 } })
+    .toArray()
   const hiddenIds = items
-    .filter((item) => sets[item.mediaType]?.has(parseInt(item.tmdbId)))
+    .filter((item) =>
+      item.tmdbId != null
+        ? // Items store the TMDB id as a number, some older ones as a string
+          sets.tmdb[item.mediaType]?.has(parseInt(item.tmdbId))
+        : sets.library[item.mediaType]?.has(item.libraryMediaId)
+    )
     .map((item) => item._id)
   return { total: items.length, hiddenIds }
 }
@@ -260,14 +270,26 @@ const WATCHLIST_INDEXES = [
   { key: { playlistId: 1, dateAdded: -1 }, options: { name: 'by_playlist_dateAdded' } },
   // One copy of a title per playlist, whoever added it. TMDB ids repeat across
   // media types, so mediaType is part of the key. Adds, moves and playlist
-  // merges rely on it to turn a second copy into E11000. Items without a TMDB
-  // id have no title to be unique on, so the index leaves them out.
+  // merges rely on it to turn a second copy into E11000. An item without a
+  // TMDB id is left out of this index and covered by the next one.
   {
     key: { playlistId: 1, mediaType: 1, tmdbId: 1 },
     options: {
       name: 'unique_playlist_title',
       unique: true,
       partialFilterExpression: { tmdbId: { $exists: true } },
+    },
+  },
+  // The same rule for a library title with no TMDB id, which is keyed on the
+  // library's own durable id for it ('mid:…', the catalog document's mediaId).
+  // An item carries one key or the other, never both: when its title is given
+  // a TMDB id, the item moves to the index above (promoteToTmdbKey).
+  {
+    key: { playlistId: 1, mediaType: 1, libraryMediaId: 1 },
+    options: {
+      name: 'unique_playlist_library_title',
+      unique: true,
+      partialFilterExpression: { libraryMediaId: { $exists: true } },
     },
   },
 ]
@@ -378,18 +400,78 @@ async function backfillSortDetails(collection, filter) {
   const unresolved = await collection
     .find(
       { ...filter, [DETAILS_RESOLVED_AT]: { $exists: false } },
-      { projection: { tmdbId: 1, mediaType: 1, title: 1, releaseDate: 1 } }
+      { projection: { tmdbId: 1, libraryMediaId: 1, mediaType: 1, title: 1, releaseDate: 1, posterBlurhash: 1 } }
     )
     .toArray()
   if (unresolved.length === 0) return
 
   // Sort keys only, stored on the items: resolved against the whole library,
   // since an item outside a viewer's scope never reaches them (hiddenItems)
-  const resolvedMedia = await batchResolveMedia(
-    unresolved.map((item) => ({ tmdbId: item.tmdbId, mediaType: item.mediaType })),
-    { access: FULL_LIBRARY }
-  )
+  const resolvedMedia = await batchResolveMedia(unresolved.map(titleRef), { access: FULL_LIBRARY })
   await storeSortDetails(collection, unresolved, resolvedMedia)
+}
+
+/** What batchResolveMedia is asked for an item: its type and whichever id it is keyed on. */
+function titleRef(item) {
+  return item.tmdbId != null
+    ? { tmdbId: item.tmdbId, mediaType: item.mediaType }
+    : { libraryMediaId: item.libraryMediaId, mediaType: item.mediaType }
+}
+
+/**
+ * Moves an item saved under its title's library id to the TMDB key, once the
+ * title has a TMDB id. From then on it is an item like any other: found by
+ * TMDB id from every surface, unable to sit beside a second copy added from a
+ * TMDB search, and shown from TMDB if the title later leaves the library. If
+ * the playlist already holds the title under its TMDB id, the library-keyed
+ * copy is the duplicate and is dropped.
+ *
+ * Runs wherever the two ids are seen together: a status check, an add, and a
+ * list read. Idempotent, and a no-op for a playlist with no such item.
+ * @returns {Promise<boolean>} True when an item was moved to the TMDB key
+ */
+async function promoteToTmdbKey(collection, { playlistId, mediaType, libraryMediaId, tmdbId }) {
+  const numericTmdbId = parseInt(tmdbId)
+  if (!Number.isFinite(numericTmdbId) || !isLibraryMediaId(libraryMediaId)) return false
+  const filter = { playlistId, mediaType, libraryMediaId }
+  try {
+    const result = await collection.updateOne(filter, {
+      $set: { tmdbId: numericTmdbId, dateUpdated: new Date() },
+      $unset: { libraryMediaId: '' },
+    })
+    return result.modifiedCount > 0
+  } catch (error) {
+    if (error?.code !== 11000) throw error
+    await collection.deleteOne(filter)
+    return false
+  }
+}
+
+// As promoteToTmdbKey, for callers that carry on either way. Never throws: a
+// failed promotion leaves the item under its library id until the next attempt.
+async function promoteToTmdbKeyQuietly(collection, key) {
+  try {
+    return await promoteToTmdbKey(collection, key)
+  } catch (error) {
+    console.error('[Watchlist] Failed to move an item to its TMDB key:', error?.message || error)
+    return false
+  }
+}
+
+// Promotes the library-keyed items of a list read whose titles resolved with a
+// TMDB id.
+async function promoteResolvedItems(collection, items, resolvedMedia) {
+  for (const item of items) {
+    if (item.tmdbId != null || !isLibraryMediaId(item.libraryMediaId)) continue
+    const tmdbId = resolvedMedia.get(titleKey(item))?.tmdbId
+    if (tmdbId == null) continue
+    await promoteToTmdbKeyQuietly(collection, {
+      playlistId: item.playlistId,
+      mediaType: item.mediaType,
+      libraryMediaId: item.libraryMediaId,
+      tmdbId,
+    })
+  }
 }
 
 export const getUserWatchlist = cache(async function getUserWatchlist({
@@ -456,17 +538,18 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
     let availableTitleKeys = null
 
     // For internalOnly mode, we need to check library availability via TMDB ID
+    // (or, for a title with none, via its library id)
     // This requires a more complex query using aggregation
     if (internalOnly) {
-      // Get TMDB IDs from watchlist
+      // Get the ids the watchlist's items are keyed on
       const watchlistQuery = await collection
-        .find(filter, { projection: { tmdbId: 1, mediaType: 1 } })
+        .find(filter, { projection: { tmdbId: 1, libraryMediaId: 1, mediaType: 1 } })
         .toArray()
-      
+
       if (watchlistQuery.length === 0) {
         return countOnly ? 0 : []
       }
-      
+
       // Group by media type
       const movieTmdbIds = watchlistQuery
         .filter(item => item.mediaType === 'movie' && item.tmdbId)
@@ -474,42 +557,67 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
       const tvTmdbIds = watchlistQuery
         .filter(item => item.mediaType === 'tv' && item.tmdbId)
         .map(item => parseInt(item.tmdbId))
-      
-      // Check which TMDB IDs exist in library AND are web-visible
+      const libraryKeyed = (mediaType) => watchlistQuery
+        .filter(item => item.mediaType === mediaType && item.tmdbId == null && isLibraryMediaId(item.libraryMediaId))
+        .map(item => item.libraryMediaId)
+      const movieLibraryIds = libraryKeyed('movie')
+      const tvLibraryIds = libraryKeyed('tv')
+
+      // Check which titles exist in library AND are web-visible
       // (must agree with checkLibraryAvailability or items oscillate)
+      const inLibrary = (collectionName, tmdbIds, libraryIds, visible) => {
+        const asked = []
+        if (tmdbIds.length > 0) asked.push({ 'metadata.id': { $in: tmdbIds } })
+        if (libraryIds.length > 0) asked.push({ mediaId: { $in: libraryIds } })
+        if (asked.length === 0) return Promise.resolve([])
+        return db.collection(collectionName).find(
+          { $and: [asked.length === 1 ? asked[0] : { $or: asked }, visible] },
+          { projection: { 'metadata.id': 1, mediaId: 1 } }
+        ).toArray()
+      }
       const [movieMatches, tvMatches] = await Promise.all([
-        movieTmdbIds.length > 0
-          ? db.collection('FlatMovies').find(
-              { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, libraryMovieFilter(access)] },
-              { projection: { 'metadata.id': 1 } }
-            ).toArray()
-          : Promise.resolve([]),
-        tvTmdbIds.length > 0
-          ? db.collection('FlatTVShows').find(
-              { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, libraryShowFilter(access)] },
-              { projection: { 'metadata.id': 1 } }
-            ).toArray()
-          : Promise.resolve([])
+        inLibrary('FlatMovies', movieTmdbIds, movieLibraryIds, libraryMovieFilter(access)),
+        inLibrary('FlatTVShows', tvTmdbIds, tvLibraryIds, libraryShowFilter(access)),
       ])
-      
+
       // Available titles, each within its own type: a movie in the library
       // says nothing about the show that shares its TMDB number
       const availableMovieIds = movieMatches.map(m => m.metadata?.id).filter(Boolean)
       const availableTvIds = tvMatches.map(t => t.metadata?.id).filter(Boolean)
-      availableTitleKeys = new Set([
-        ...availableMovieIds.map(tmdbId => titleKey({ mediaType: 'movie', tmdbId })),
-        ...availableTvIds.map(tmdbId => titleKey({ mediaType: 'tv', tmdbId }))
-      ])
-      
+      const present = (matches, asked) => {
+        const found = new Set(matches.map(match => match.mediaId))
+        return asked.filter(libraryMediaId => found.has(libraryMediaId))
+      }
+      const availableMovieLibraryIds = present(movieMatches, movieLibraryIds)
+      const availableTvLibraryIds = present(tvMatches, tvLibraryIds)
+
+      // Filter watchlist to only available items. The library-id arms are
+      // there only for a playlist that holds such items.
+      const libraryArm = (mediaType, libraryMediaIds) =>
+        libraryMediaIds.length > 0 ? [{ mediaType, libraryMediaId: { $in: libraryMediaIds } }] : []
+      const availableItems = [
+        { mediaType: 'movie', tmdbId: { $in: availableMovieIds } },
+        { mediaType: 'tv', tmdbId: { $in: availableTvIds } },
+        ...libraryArm('movie', availableMovieLibraryIds),
+        ...libraryArm('tv', availableTvLibraryIds),
+      ]
+      // Only the items the list holds count: a title found by library id also
+      // brings its TMDB id along, which no item here may be keyed on
+      availableTitleKeys = new Set(
+        watchlistQuery
+          .filter(item =>
+            item.tmdbId != null
+              ? (item.mediaType === 'movie' ? availableMovieIds : availableTvIds).includes(parseInt(item.tmdbId))
+              : (item.mediaType === 'movie' ? availableMovieLibraryIds : availableTvLibraryIds).includes(item.libraryMediaId)
+          )
+          .map(titleKey)
+      )
+
       if (countOnly) {
         return availableTitleKeys.size
       }
-      
-      // Filter watchlist to only available items
-      filter.$or = [
-        { mediaType: 'movie', tmdbId: { $in: availableMovieIds } },
-        { mediaType: 'tv', tmdbId: { $in: availableTvIds } }
-      ]
+
+      filter.$or = availableItems
     }
 
     // Count only query (after applying internalOnly filter if needed)
@@ -553,10 +661,7 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
     }
 
     // Batch resolve media data
-    const itemsToResolve = watchlistItems.map((item) => ({
-      tmdbId: item.tmdbId,
-      mediaType: item.mediaType,
-    }))
+    const itemsToResolve = watchlistItems.map(titleRef)
 
     // Resolve media data in batch - pass pre-computed availability to eliminate duplicate queries
     const resolvedMedia = await batchResolveMedia(itemsToResolve, {
@@ -588,10 +693,16 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
           watchlistId: item._id.toString(),
           userId: item.userId.toString(),
           playlistId: item.playlistId.toString(),
-          tmdbId: parseInt(item.tmdbId),
+          // Null for a title kept under its library id: it has no TMDB id
+          tmdbId: item.tmdbId != null ? parseInt(item.tmdbId) : null,
+          libraryMediaId: item.libraryMediaId,
           mediaType: item.mediaType,
           title: item.title || untitledLabel(resolved),
           tmdbNotFound: resolved?.tmdbNotFound || undefined,
+          // The library no longer has the title, and there is no TMDB entry to
+          // show in its place: the item's own stored details are what's left
+          libraryMissing: resolved?.libraryMissing || undefined,
+          releaseDate: item.releaseDate || undefined,
           dateAdded: item.dateAdded,
           notes: item.notes,
           rating: item.rating,
@@ -612,6 +723,9 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
     // the pages either side of it. What the items resolved to refreshes their
     // stored details, so a renamed title moves on the next load.
     await storeSortDetails(collection, watchlistItems, resolvedMedia)
+    // A title that has been given a TMDB id since it was added: its item moves
+    // to the TMDB key. This read still shows it as it was resolved.
+    await promoteResolvedItems(collection, watchlistItems, resolvedMedia)
 
     log.debug({ callId, returned: enhancedItems.length, playlistId: actualPlaylistId }, 'getUserWatchlist exit')
     return enhancedItems
@@ -625,7 +739,10 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
  * Add item to watchlist
  * @param {Object} item - Watchlist item data
  * @param {string} [item.mediaId] - Internal media ID (for library items)
- * @param {number} [item.tmdbId] - TMDB ID
+ * @param {number} [item.tmdbId] - TMDB ID: the key the item is stored under when the title has one
+ * @param {string} [item.libraryMediaId] - The title's library id ('mid:…'), from the catalog and never
+ *   from the client. The key for a library title with no TMDB id. Beside a TMDB id it only finds an item
+ *   saved before the title had one, which then moves to the TMDB key
  * @param {string} item.mediaType - 'movie' or 'tv'
  * @param {string} item.title - Media title
  * @param {boolean} [item.isExternal=false] - Whether this is external TMDB-only media
@@ -638,6 +755,7 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
 export async function addToWatchlist({
   mediaId,
   tmdbId,
+  libraryMediaId = null,
   mediaType,
   title,
   isExternal = false,
@@ -655,8 +773,10 @@ export async function addToWatchlist({
     throw new Error('User not authenticated')
   }
 
-  if (!tmdbId || !mediaType) {
-    throw new Error('TMDB ID and media type are required')
+  // Keyed on the TMDB id when the title has one, else on the library's own id for it
+  const libraryKeyed = !tmdbId && isLibraryMediaId(libraryMediaId)
+  if ((!tmdbId && !libraryKeyed) || !mediaType) {
+    throw new Error('A TMDB ID or a library id, and the media type, are required')
   }
 
   try {
@@ -688,11 +808,25 @@ export async function addToWatchlist({
     await ensureWatchlistIndexes()
 
     const playlistObjectId = new ObjectId(actualPlaylistId)
-    const numericTmdbId = parseInt(tmdbId)
+    const numericTmdbId = libraryKeyed ? null : parseInt(tmdbId)
+    // Which title the item is: its key in the playlist, and what it is looked up by
+    const titleId = libraryKeyed ? { mediaType, libraryMediaId } : { mediaType, tmdbId: numericTmdbId }
     const now = new Date()
 
-    // Minimal watchlist entry; the playlist, TMDB ID and media type come from
-    // the upsert filter below
+    // An item saved under the library id before the title had a TMDB id moves
+    // to the TMDB key first, so the upsert below finds it instead of adding a
+    // second copy
+    if (!libraryKeyed && isLibraryMediaId(libraryMediaId)) {
+      await promoteToTmdbKeyQuietly(collection, {
+        playlistId: playlistObjectId,
+        mediaType,
+        libraryMediaId,
+        tmdbId: numericTmdbId,
+      })
+    }
+
+    // Minimal watchlist entry; the playlist, the title's id and media type come
+    // from the upsert filter below
     const watchlistItem = {
       userId: userObjectId,
       dateAdded: now,
@@ -716,11 +850,12 @@ export async function addToWatchlist({
     // step. A check followed by a separate insert let a retry through while the
     // first request was still busy, and the playlist got the title twice. The
     // title belongs to the playlist, not to whoever added it, so the filter has
-    // no userId. When two upserts race, unique_playlist_title stops the second.
+    // no userId. When two upserts race, the unique index on the key
+    // (unique_playlist_title, unique_playlist_library_title) stops the second.
     let upsertResult
     try {
       upsertResult = await collection.updateOne(
-        { playlistId: playlistObjectId, mediaType, tmdbId: numericTmdbId },
+        { playlistId: playlistObjectId, ...titleId },
         { $setOnInsert: watchlistItem },
         { upsert: true }
       )
@@ -742,11 +877,13 @@ export async function addToWatchlist({
     // falls back to what the request carried; the item is already saved.
     let mediaData = null
     try {
-      const resolvedMedia = await batchResolveMedia([{ tmdbId: numericTmdbId, mediaType }], { access })
-      mediaData = asResolvedMedia(resolvedMedia.get(titleKey({ mediaType, tmdbId: numericTmdbId })))
+      const resolvedMedia = await batchResolveMedia([titleId], { access })
+      mediaData = asResolvedMedia(resolvedMedia.get(titleKey(titleId)))
+      // For a library-keyed item this also stores what is shown if the title
+      // later leaves the library (listOrder.js)
       await storeSortDetails(
         collection,
-        [{ _id: upsertResult.upsertedId, tmdbId: numericTmdbId, mediaType, title: watchlistItem.title }],
+        [{ _id: upsertResult.upsertedId, ...titleId, title: watchlistItem.title }],
         resolvedMedia
       )
     } catch (error) {
@@ -772,6 +909,7 @@ export async function addToWatchlist({
         userId: userObjectId.toString(),
         playlistId: playlistObjectId.toString(),
         tmdbId: numericTmdbId,
+        ...(libraryKeyed ? { libraryMediaId } : {}),
         mediaType,
         title: title || 'Unknown Title',
         posterURL: posterURL || '/sorry-image-not-available.jpg',
@@ -779,7 +917,7 @@ export async function addToWatchlist({
         notes: watchlistItem.notes,
         rating: watchlistItem.rating,
         isInternal: false,
-        isExternal: true,
+        isExternal: !libraryKeyed,
       }
     }
   } catch (error) {
@@ -872,13 +1010,18 @@ async function deleteRemovableItems(db, itemObjectIds, user) {
  * @param {string} [mediaId] - Internal media ID
  * @param {number} [tmdbId] - TMDB ID
  * @param {string} [playlistId] - Specific playlist to check (optional)
+ * @param {string} [mediaType] - 'movie' or 'tv'
+ * @param {string} [libraryMediaId] - The title's library id ('mid:…'), from the catalog
+ *   (findLibraryTitleIdentity). Alone, it is the key of a title with no TMDB id. Beside a TMDB id, it
+ *   finds an item saved before the title had one and moves it to the TMDB key
  * @returns {Promise<Object|null>} Watchlist item if exists, null otherwise
  */
 export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
   mediaId = null,
   tmdbId = null,
   playlistId = null,
-  mediaType = null
+  mediaType = null,
+  libraryMediaId = null
 ) {
   const session = await getSession()
 
@@ -915,20 +1058,43 @@ export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
       playlistId: new ObjectId(actualPlaylistId),
     }
 
-    // Prioritize TMDB ID as primary key, fall back to mediaId if needed
+    const typed = mediaType === 'movie' || mediaType === 'tv'
+    const libraryKey = typed && isLibraryMediaId(libraryMediaId) ? { mediaType, libraryMediaId } : null
+
+    // The TMDB id is the key when the title has one; a library title with
+    // none is keyed on its library id. Failing both, the mediaId is an id the
+    // library can't place: an item that recorded it when it was added, or the
+    // item's own id. A list shows a title the library doesn't have under its
+    // item's id, which for one with no TMDB id is all a client has to send
+    // back, and the only way to find it once the title has left the library.
     if (tmdbId) {
       query.tmdbId = parseInt(tmdbId)
       // TMDB ids repeat across media types; narrow when the caller says which
-      if (mediaType === 'movie' || mediaType === 'tv') {
+      if (typed) {
         query.mediaType = mediaType
       }
+    } else if (libraryKey) {
+      Object.assign(query, libraryKey)
     } else if (mediaId && isValidObjectId(mediaId)) {
-      query.mediaId = new ObjectId(mediaId)
+      const id = new ObjectId(mediaId)
+      query.$or = [{ mediaId: id }, { _id: id }]
     } else {
       return null // No valid identifiers provided
     }
 
-    const item = await collection.findOne(query)
+    let item = await collection.findOne(query)
+
+    // Not under the TMDB id, but the title was in the library before it had
+    // one: its item may still be under the library id. Moved to the TMDB key
+    // here, it is found by every later check.
+    if (!item && tmdbId && libraryKey) {
+      const promoted = await promoteToTmdbKeyQuietly(collection, {
+        playlistId: query.playlistId,
+        ...libraryKey,
+        tmdbId,
+      })
+      if (promoted) item = await collection.findOne(query)
+    }
 
     if (!item) {
       return null
@@ -950,35 +1116,41 @@ export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
 })
 
 /**
- * Find media by mediaId and extract TMDB ID
- * This is a transitional function to help migrate from mediaId to tmdbId
- * @param {string} mediaId - Media ID
+ * Which title a client means by the id it holds for a library title: the
+ * catalog document's _id (what the web and the apps send as mediaId), or the
+ * title's library id ('mid:…'). A watchlist item is keyed on the TMDB id when
+ * the title has one, else on the library id, which unlike the document's _id
+ * is the same if the title leaves the library and comes back.
+ *
+ * Throws when the lookup fails: only a lookup that ran says the library has
+ * no such title.
+ * @param {string} mediaId - The catalog document's _id, or the title's library id
  * @param {string} mediaType - Media type ('movie' or 'tv')
  * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The caller's library access: a title outside it is not found
- * @returns {Promise<number|null>} TMDB ID if found, null otherwise
+ * @returns {Promise<{ tmdbId: number|null, libraryMediaId: string|null }|null>} Null when the caller's library has no such title
  */
-export async function findTMDBIdByMediaId(mediaId, mediaType, access) {
+export async function findLibraryTitleIdentity(mediaId, mediaType, access) {
   assertLibraryAccess(access)
-  if (!mediaId || !isValidObjectId(mediaId)) {
-    return null
-  }
+  if (mediaType !== 'movie' && mediaType !== 'tv') return null
 
-  try {
-    const client = await clientPromise
-    const db = client.db('Media')
-    const collection = mediaType === 'movie' ? 'FlatMovies' : 'FlatTVShows'
+  let named = null
+  if (isValidObjectId(mediaId)) named = { _id: new ObjectId(mediaId) }
+  else if (isLibraryMediaId(mediaId)) named = { mediaId }
+  if (!named) return null
 
-    const media = await db
-      .collection(collection)
-      .findOne(
-        { _id: new ObjectId(mediaId), ...(mediaType === 'movie' ? scopeMovieFilter(access) : scopeShowFilter(access)) },
-        { projection: { 'metadata.id': 1 } }
-      )
+  const client = await clientPromise
+  const media = await client
+    .db('Media')
+    .collection(mediaType === 'movie' ? 'FlatMovies' : 'FlatTVShows')
+    .findOne(
+      { ...named, ...(mediaType === 'movie' ? scopeMovieFilter(access) : scopeShowFilter(access)) },
+      { projection: { 'metadata.id': 1, mediaId: 1 } }
+    )
+  if (!media) return null
 
-    return media?.metadata?.id || null
-  } catch (error) {
-    console.error(`Error finding TMDB ID for ${mediaType} ${mediaId}:`, error)
-    return null
+  return {
+    tmdbId: media.metadata?.id || null,
+    libraryMediaId: isLibraryMediaId(media.mediaId) ? media.mediaId : null,
   }
 }
 
@@ -1140,8 +1312,8 @@ async function mergeItemsIntoPlaylist(collection, filter, targetPlaylistId, { st
   await ensureWatchlistIndexes()
 
   const [items, targetItems] = await Promise.all([
-    collection.find(filter, { projection: { mediaType: 1, tmdbId: 1 } }).sort({ dateAdded: 1, _id: 1 }).toArray(),
-    collection.find({ playlistId: targetPlaylistId }, { projection: { mediaType: 1, tmdbId: 1 } }).toArray(),
+    collection.find(filter, { projection: { mediaType: 1, tmdbId: 1, libraryMediaId: 1 } }).sort({ dateAdded: 1, _id: 1 }).toArray(),
+    collection.find({ playlistId: targetPlaylistId }, { projection: { mediaType: 1, tmdbId: 1, libraryMediaId: 1 } }).toArray(),
   ])
   if (items.length === 0) {
     return 0
@@ -2486,7 +2658,21 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
       .map((item) => parseInt(item.tmdbId))
       .filter((id) => !isNaN(id))
 
-    if (movieTmdbIds.length === 0 && tvTmdbIds.length === 0) {
+    // Titles with no TMDB id, kept under their library ids
+    const libraryKeyed = (item) => item.tmdbId == null && isLibraryMediaId(item.libraryMediaId)
+    const movieLibraryIds = watchlistItems
+      .filter((item) => item.mediaType === 'movie' && libraryKeyed(item))
+      .map((item) => item.libraryMediaId)
+    const tvLibraryIds = watchlistItems
+      .filter((item) => item.mediaType === 'tv' && libraryKeyed(item))
+      .map((item) => item.libraryMediaId)
+
+    if (
+      movieTmdbIds.length === 0 &&
+      tvTmdbIds.length === 0 &&
+      movieLibraryIds.length === 0 &&
+      tvLibraryIds.length === 0
+    ) {
       return []
     }
 
@@ -2503,57 +2689,55 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
       blurhash: 1,              // Contains backdrop blurhash structure
       link: 1,
       mediaLastModified: 1,
+      // The library id: matches a library-keyed item to its title, and is
+      // left off the card (see the available branch below)
+      mediaId: 1,
       'metadata.id': 1,
       'metadata.release_date': 1,
       'metadata.first_air_date': 1
     }
 
-    const queries = []
-    
     // Web-hidden titles are excluded here so they fall through to the
-    // external-TMDB card branch below (degrade to unavailable, not dead-end)
-    if (movieTmdbIds.length > 0) {
-      queries.push(
-        db
-          .collection('FlatMovies')
-          .find(
-            { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, libraryMovieFilter(access)] },
-            { projection: minimalProjection }
-          )
-          .toArray()
-      )
-    } else {
-      queries.push(Promise.resolve([]))
+    // unavailable card branch below (degrade to unavailable, not dead-end)
+    const inLibrary = (collectionName, tmdbIds, libraryIds, visible) => {
+      const asked = []
+      if (tmdbIds.length > 0) asked.push({ 'metadata.id': { $in: tmdbIds } })
+      if (libraryIds.length > 0) asked.push({ mediaId: { $in: libraryIds } })
+      if (asked.length === 0) return Promise.resolve([])
+      return db
+        .collection(collectionName)
+        .find({ $and: [asked.length === 1 ? asked[0] : { $or: asked }, visible] }, { projection: minimalProjection })
+        .toArray()
     }
 
-    if (tvTmdbIds.length > 0) {
-      queries.push(
-        db
-          .collection('FlatTVShows')
-          .find(
-            { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, libraryShowFilter(access)] },
-            { projection: minimalProjection }
-          )
-          .toArray()
-      )
-    } else {
-      queries.push(Promise.resolve([]))
-    }
-
-    const [movies, tvShows] = await Promise.all(queries)
+    const [movies, tvShows] = await Promise.all([
+      inLibrary('FlatMovies', movieTmdbIds, movieLibraryIds, libraryMovieFilter(access)),
+      inLibrary('FlatTVShows', tvTmdbIds, tvLibraryIds, libraryShowFilter(access)),
+    ])
 
     // titleKey -> available media document. Keyed by type too: TMDB ids
-    // repeat across media types
+    // repeat across media types. A title is entered under its TMDB id, and
+    // under its library id for the items keyed on that.
     const availableMediaMap = new Map()
-    for (const [mediaType, documents] of [['movie', movies], ['tv', tvShows]]) {
+    for (const [mediaType, documents, libraryIds] of [
+      ['movie', movies, new Set(movieLibraryIds)],
+      ['tv', tvShows, new Set(tvLibraryIds)],
+    ]) {
       for (const item of documents) {
         const tmdbId = item.metadata?.id
         if (tmdbId) availableMediaMap.set(titleKey({ mediaType, tmdbId }), item)
+        if (libraryIds.has(item.mediaId)) {
+          availableMediaMap.set(titleKey({ mediaType, libraryMediaId: item.mediaId }), item)
+        }
       }
     }
 
-    // Identify external items that need TMDB data fetching
-    const externalItems = watchlistItems.filter(item => !availableMediaMap.has(titleKey(item)) && includeUnavailable)
+    // Identify external items that need TMDB data fetching. A library-keyed
+    // item isn't one: with no TMDB id there is nothing to fetch, and the
+    // lookup above has already said its title is gone.
+    const externalItems = watchlistItems.filter(
+      (item) => !libraryKeyed(item) && !availableMediaMap.has(titleKey(item)) && includeUnavailable
+    )
 
     // Resolve TMDB metadata for external items. Pre-resolved items (already
     // enhanced by getUserWatchlist's batchResolveMedia pass) are reused as-is —
@@ -2608,27 +2792,33 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
       }
     }
 
-    // Bulk fetch "Coming Soon" status for all watchlist items
+    // Bulk fetch "Coming Soon" status for all watchlist items. Coming Soon is
+    // kept by TMDB id, so a library-keyed item has none.
     const comingSoonMap = await bulkGetComingSoonStatus(
-      watchlistItems.map((item) => ({
-        tmdbId: parseInt(item.tmdbId),
-        mediaType: item.mediaType,
-      }))
+      watchlistItems
+        .filter((item) => !libraryKeyed(item))
+        .map((item) => ({
+          tmdbId: parseInt(item.tmdbId),
+          mediaType: item.mediaType,
+        }))
     )
 
     // Process ALL watchlist items with minimal data
     let results = watchlistItems.map((watchlistItem) => {
-      const tmdbId = parseInt(watchlistItem.tmdbId)
+      // Null for a library-keyed item: its title has no TMDB id
+      const tmdbId = libraryKeyed(watchlistItem) ? null : parseInt(watchlistItem.tmdbId)
       const availableMedia = availableMediaMap.get(titleKey(watchlistItem))
       const comingSoonData = comingSoonMap.get(titleKey(watchlistItem))
-      
+
       if (availableMedia) {
         // Item is available in library - return minimal media document
         // it pulls TV shows from the root object in FlatShows so we have to transform
         // the type field since it's named differently
         const derivedType = availableMedia.type === 'tvShow' ? 'tv' : availableMedia.type
+        // The library id was read to match the item, not to go on the card
+        const { mediaId: _libraryId, ...media } = availableMedia
         return {
-          ...availableMedia,
+          ...media,
           type: derivedType,
           id: availableMedia._id?.toString() || availableMedia.id,
           tmdbId: tmdbId,
@@ -2647,12 +2837,17 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
           dateAdded: watchlistItem.dateAdded
         }
       } else if (includeUnavailable) {
-        // Item is NOT in library - fetch TMDB data or use fallback
+        // Item is NOT in library - use TMDB data, or for a library-keyed item
+        // (no TMDB entry to turn to) what the item itself stored
+        const libraryMissing = libraryKeyed(watchlistItem)
         const resolved = externalTmdbData.get(titleKey(watchlistItem))
         const tmdbData = asResolvedMedia(resolved)
 
         // Use TMDB data if available, otherwise fall back to cached watchlist data
-        const title = tmdbData?.title || watchlistItem.title || untitledLabel(resolved)
+        const title =
+          tmdbData?.title ||
+          watchlistItem.title ||
+          (libraryMissing ? LIBRARY_MISSING_TITLE : untitledLabel(resolved))
         const posterURL = tmdbData?.posterURL || watchlistItem.posterURL || '/sorry-image-not-available.jpg'
         const backdropURL = tmdbData?.backdrop || watchlistItem.backdrop || watchlistItem.backdropURL || null
         const posterBlurhash = tmdbData?.posterBlurhash || watchlistItem.posterBlurhash || null
@@ -2660,7 +2855,8 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
         const releaseDate = tmdbData?.metadata?.release_date ||
                            tmdbData?.metadata?.first_air_date ||
                            watchlistItem.tmdbMetadata?.release_date ||
-                           watchlistItem.tmdbMetadata?.first_air_date
+                           watchlistItem.tmdbMetadata?.first_air_date ||
+                           (libraryMissing ? watchlistItem.releaseDate : undefined)
         
         return {
           _id: watchlistItem._id?.toString() || watchlistItem.id,
@@ -2682,6 +2878,9 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
           },
           // Availability flags
           isAvailable: false,
+          // Present (true) only for a title with no TMDB id that has left the
+          // library: there is nothing to show but what the item stored
+          ...(libraryMissing ? { libraryMissing: true, libraryMediaId: watchlistItem.libraryMediaId } : {}),
           comingSoon: comingSoonData?.comingSoon || false,
           comingSoonDate: comingSoonData?.comingSoonDate || null,
           link: null,

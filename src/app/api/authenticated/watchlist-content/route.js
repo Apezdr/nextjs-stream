@@ -56,7 +56,10 @@ function minimizePlaylistItemsForUX(items) {
     isAvailable: item.isAvailable,
     isComingSoon: item.isComingSoon,
     comingSoonDate: item.comingSoonDate,
-    
+    // A title with no TMDB id (tmdbId is null) that has left the library: it
+    // stays on the list, unavailable, with only its stored title to show
+    ...(item.libraryMissing && { libraryMissing: true }),
+
     // Include watch history if present
     ...(item.watchHistory && { watchHistory: item.watchHistory }),
     

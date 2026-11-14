@@ -21,7 +21,7 @@
    updatePlaylistSorting,
    updatePlaylistCustomOrder,
    ensureDefaultPlaylist,
-   findTMDBIdByMediaId,
+   findLibraryTitleIdentity,
    getMinimalCardDataForPlaylist,
    // Per-user playlist visibility, read by the home page and TV content (written by homeRows.js)
    getPlaylistVisibility,
@@ -67,6 +67,7 @@ import { VALID_MEDIA_TYPES } from './validation.js'
  * @param {Object} item - Item data
  * @param {string} [item.mediaId] - Internal media ID
  * @param {number} [item.tmdbId] - TMDB ID
+ * @param {string} [item.libraryMediaId] - The title's library id ('mid:…'), from the catalog: the key of a title with no TMDB id
  * @param {string} item.mediaType - Media type
  * @param {string} item.title - Media title
  * @param {boolean} [item.isExternal] - Whether external media
@@ -77,7 +78,13 @@ import { VALID_MEDIA_TYPES } from './validation.js'
 export async function toggleWatchlist(item) {
   try {
     // Check if item already exists in the specific playlist
-    const existingItem = await checkWatchlistStatus(item.mediaId, item.tmdbId, item.playlistId, item.mediaType)
+    const existingItem = await checkWatchlistStatus(
+      item.mediaId,
+      item.tmdbId,
+      item.playlistId,
+      item.mediaType,
+      item.libraryMediaId
+    )
 
     if (existingItem) {
       // Remove from watchlist
@@ -126,7 +133,10 @@ export function formatWatchlistItem(item) {
   return {
     id: item.id,
     mediaId: item.mediaId,
-    tmdbId: item.tmdbId,
+    // Null for a library title with no TMDB id, which is kept under libraryMediaId
+    tmdbId: item.tmdbId ?? null,
+    // The title's library id ('mid:…'): present only on an item keyed on it
+    libraryMediaId: item.libraryMediaId || undefined,
     title: item.title,
     mediaType: item.mediaType,
     isExternal: item.isExternal,
@@ -145,6 +155,11 @@ export function formatWatchlistItem(item) {
     originalLanguage: item.originalLanguage,
     // Present (true) only for a title TMDB no longer has; see tmdbMissing.js
     tmdbNotFound: item.tmdbNotFound || undefined,
+    // Present (true) only for a title with no TMDB id that has left the
+    // library: the item stays, shown from what it stored when it was added
+    libraryMissing: item.libraryMissing || undefined,
+    // With it, the blurhash of the poster: the one image left of the title
+    posterBlurhash: (item.libraryMissing && item.posterBlurhash) || undefined,
     playlistId: item.playlistId
   }
 }

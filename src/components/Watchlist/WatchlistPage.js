@@ -1542,8 +1542,12 @@ export default function WatchlistPage({ user }) {
       console.log('[handleCopyFromModal] mediaId:', moveItemData.mediaId)
       console.log('[handleCopyFromModal] tmdbId:', moveItemData.tmdbId)
       
+      // A title with no TMDB id is copied by its library id, which the add
+      // endpoint takes as a mediaId and looks up in the library
+      const copyMediaId = moveItemData.mediaId || (moveItemData.tmdbId ? null : moveItemData.libraryMediaId)
+
       // Validate we have required IDs
-      if (!moveItemData.mediaId && !moveItemData.tmdbId) {
+      if (!copyMediaId && !moveItemData.tmdbId) {
         console.error('[handleCopyFromModal] Missing both mediaId and tmdbId!', moveItemData)
         toast.error('Cannot copy item: missing required IDs')
         throw new Error('Missing mediaId and tmdbId')
@@ -1558,8 +1562,8 @@ export default function WatchlistPage({ user }) {
       }
       
       // Add IDs based on what's available
-      if (moveItemData.mediaId) {
-        watchlistItem.mediaId = moveItemData.mediaId
+      if (copyMediaId) {
+        watchlistItem.mediaId = copyMediaId
       }
       if (moveItemData.tmdbId) {
         watchlistItem.tmdbId = moveItemData.tmdbId

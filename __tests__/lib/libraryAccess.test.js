@@ -38,7 +38,12 @@ const PICKS = {
 }
 const REQUESTER = { id: 'r-req', name: 'Requester', grants: { 'arr.manage': {} }, scope: null }
 
-const title = (id, originalTitle, rating, tmdbId) => ({ _id: { toString: () => id }, originalTitle, metadata: { rating, id: tmdbId } })
+const title = (id, originalTitle, rating, tmdbId) => ({
+  _id: { toString: () => id },
+  originalTitle,
+  mediaId: `mid:${id}`,
+  metadata: { rating, id: tmdbId },
+})
 
 let roles
 beforeEach(() => {
@@ -46,7 +51,13 @@ beforeEach(() => {
   mockListRoles.mockReset().mockImplementation(async () => roles)
   mockForgetRoles.mockReset()
   mockFind.mockClear()
-  mockCatalog.FlatMovies = [title('m1', 'Cartoon', 'G', 11), title('m2', 'Thriller', 'R', 12), title('m3', 'Thriller Cut', 'PG', 12)]
+  mockCatalog.FlatMovies = [
+    title('m1', 'Cartoon', 'G', 11),
+    title('m2', 'Thriller', 'R', 12),
+    title('m3', 'Thriller Cut', 'PG', 12),
+    // A document the scanner never gave a library id
+    { ...title('m4', 'Thriller Old Scan', 'R', 12), mediaId: undefined },
+  ]
   mockCatalog.FlatTVShows = [title('b2', 'Puppets', 'TV-Y', 21), title('a1', 'Picked', 'TV-MA', 22), title('c3', 'Crime', 'TV-MA', 23)]
 })
 
@@ -107,6 +118,10 @@ describe('a scoped user', () => {
     expect([...index.showKeys]).toEqual(['Puppets'])
     // 12 stays: one of its two documents is in scope
     expect(index.hiddenTmdbIds).toEqual({ movie: [], tv: [22, 23] })
+    // By library id, every document out of scope is listed: an id belongs to
+    // one document, so m2 is hidden though the TMDB id it shares stays
+    // (m4 is out of scope too, but has no library id to list)
+    expect(index.hiddenMediaIds).toEqual({ movie: ['mid:m2'], tv: ['mid:a1', 'mid:c3'] })
   })
 
   it('an empty scope (the migrated Preview role) is a scope: nothing in it', async () => {

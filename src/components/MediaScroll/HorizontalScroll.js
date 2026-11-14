@@ -445,6 +445,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
                         isAvailable={item.isAvailable}
                         comingSoon={item.comingSoon}
                         comingSoonDate={item.comingSoonDate}
+                        libraryMissing={item.libraryMissing}
                         metadata={item.metadata}
                         // Trailer/external video flag
                         isTrailer={item.isTrailer}

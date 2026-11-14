@@ -8,7 +8,7 @@ import Image from 'next/image'
 import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
 import { useNavigation } from '@src/contexts/NavigationContext'
-import ItemActionSheet from './ItemActionSheet'
+import ItemActionSheet, { comingSoonAllowed } from './ItemActionSheet'
 import { prefersSheet } from './BottomSheet'
 import useOverlayState from './useOverlayState'
 import ArrDialog from '@components/Arr/ArrDialog'
@@ -59,6 +59,15 @@ export default function WatchlistCard({
   
   // Check if user is admin
   const isAdmin = isAdminUser(user)
+  // Coming Soon is kept by TMDB id, so a title without one can't carry it
+  const canMarkComingSoon = comingSoonAllowed(item, isAdmin)
+  // A title with no TMDB id that has left the library has no poster to load:
+  // the file went with it, and there is no TMDB entry. The blurhash stored on
+  // the item is the one image left of it.
+  const posterSrc =
+    item.libraryMissing && item.posterBlurhash
+      ? `data:image/png;base64,${item.posterBlurhash}`
+      : item.posterURL
 
   // Send the title to Radarr (movies) or Sonarr (shows), or manage it there,
   // for users whose roles allow it. Hidden once the status check says the
@@ -411,7 +420,8 @@ export default function WatchlistCard({
         {/* Poster */}
         <div className="flex-shrink-0 w-16 h-24 relative">
           <Image
-            src={item.posterURL}
+            src={posterSrc}
+            unoptimized={posterSrc !== item.posterURL}
             alt={item.title}
             fill
             className="object-cover rounded"
@@ -458,6 +468,11 @@ export default function WatchlistCard({
                 {item.isExternal && (
                   <span className="bg-yellow-600 text-white text-xs px-2 py-0.5 rounded">
                     External
+                  </span>
+                )}
+                {item.libraryMissing && (
+                  <span className="bg-gray-600 text-white text-xs px-2 py-0.5 rounded">
+                    No longer in the library
                   </span>
                 )}
                 {arrChip}
@@ -535,7 +550,7 @@ export default function WatchlistCard({
                         </>
                       )}
                       {/* Admin-only Coming Soon controls - only for unavailable items */}
-                      {isAdmin && !item.isAvailable && (
+                      {canMarkComingSoon && (
                         <>
                           <div className="border-t border-gray-600 my-1"></div>
                           {item.comingSoon ? (
@@ -598,7 +613,8 @@ export default function WatchlistCard({
       {/* Poster */}
       <div className="relative aspect-[2/3]">
         <Image
-          src={item.posterURL}
+          src={posterSrc}
+          unoptimized={posterSrc !== item.posterURL}
           alt={item.title}
           fill
           className={classNames("object-cover group-hover:opacity-100 group-focus:opacity-100 transition-opacity duration-700",
@@ -751,7 +767,7 @@ export default function WatchlistCard({
               <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              Not available yet
+              {item.libraryMissing ? 'No longer in the library' : 'Not available yet'}
             </div>
           )}
         </div>
@@ -817,7 +833,7 @@ export default function WatchlistCard({
               </>
             )}
             {/* Admin-only Coming Soon controls - only for unavailable items */}
-            {isAdmin && !item.isAvailable && (
+            {canMarkComingSoon && (
               <>
                 <div className="border-t border-gray-600 my-1"></div>
                 {item.comingSoon ? (

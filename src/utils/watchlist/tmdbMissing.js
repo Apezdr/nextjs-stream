@@ -1,11 +1,14 @@
 /**
- * Titles TMDB no longer has.
+ * Titles that are gone from where a watchlist item reads them: from TMDB, or
+ * (for a title with no TMDB id) from the library.
  *
  * The media processor answers 404 (code TMDB_NOT_FOUND) when TMDB has no such
  * title, typically one TMDB deleted after it was added to a watchlist. Such an
  * item used to stay unresolved and show as "Unknown Title"; it now resolves to
- * a placeholder that says what happened. Kept out of mediaResolver.js, a
- * 'use server' module, which may only export async functions.
+ * a placeholder that says what happened. A library title with no TMDB id that
+ * leaves the library gets the same treatment (missingFromLibraryMedia). Kept
+ * out of mediaResolver.js, a 'use server' module, which may only export async
+ * functions.
  */
 
 export const TMDB_MISSING_TITLE = 'No longer on TMDB'
@@ -61,24 +64,71 @@ export function missingFromTmdbMedia(tmdbId, mediaType) {
   }
 }
 
+export const LIBRARY_MISSING_TITLE = 'No longer in the library'
+
 /**
- * A batchResolveMedia entry as media, or null for a title TMDB no longer has.
- * That placeholder goes the way of an unresolved item, whose fallbacks use the
- * item's own stored details; treated as media, its label and stock poster
- * would replace them.
+ * The resolved-media shape for a title the library no longer has, kept on a
+ * list under its library id because it has no TMDB id. Unlike a TMDB title
+ * that leaves the library, there is nowhere else to read it from: what the
+ * item stored when it was added (its title, its poster's blurhash) is all
+ * there is to show. The item stays until someone removes it, and matches the
+ * title again if it comes back under the same library id.
+ *
+ * Only a lookup that ran and found nothing yields this. One that failed
+ * throws, so an outage never labels a list's titles as removed.
+ * @param {string} libraryMediaId - The title's library id ('mid:…')
+ * @param {string} mediaType - 'movie' or 'tv'
+ * @returns {Object}
+ */
+export function missingFromLibraryMedia(libraryMediaId, mediaType) {
+  return {
+    tmdbId: null,
+    libraryMediaId,
+    mediaType,
+    currentMediaId: null,
+    title: LIBRARY_MISSING_TITLE,
+    libraryMissing: true,
+    posterURL: '/sorry-image-not-available.jpg',
+    posterBlurhash: null,
+    backdropURL: null,
+    backdropBlurhash: null,
+    overview: null,
+    releaseDate: null,
+    genres: [],
+    voteAverage: null,
+    isInternal: false,
+    isExternal: false,
+    isAvailable: false,
+    url: null,
+    link: null,
+  }
+}
+
+/** True for either placeholder: a title gone from TMDB, or from the library. */
+export function isMissingTitle(entry) {
+  return Boolean(entry?.tmdbNotFound || entry?.libraryMissing)
+}
+
+/**
+ * A batchResolveMedia entry as media, or null for a title that is gone (from
+ * TMDB, or from the library). That placeholder goes the way of an unresolved
+ * item, whose fallbacks use the item's own stored details; treated as media,
+ * its label and stock poster would replace them.
  * @param {Object|undefined} entry - From batchResolveMedia's map
  * @returns {Object|null}
  */
 export function asResolvedMedia(entry) {
-  return entry && !entry.tmdbNotFound ? entry : null
+  return entry && !isMissingTitle(entry) ? entry : null
 }
 
 /**
- * The title for an item with none of its own: the label for a title TMDB no
- * longer has, "Unknown Title" otherwise.
+ * The title for an item with none of its own: the label for a title that is
+ * gone, "Unknown Title" otherwise.
  * @param {Object|undefined} entry - From batchResolveMedia's map
  * @returns {string}
  */
 export function untitledLabel(entry) {
-  return entry?.tmdbNotFound ? TMDB_MISSING_TITLE : 'Unknown Title'
+  if (entry?.tmdbNotFound) return TMDB_MISSING_TITLE
+  if (entry?.libraryMissing) return LIBRARY_MISSING_TITLE
+  return 'Unknown Title'
 }
