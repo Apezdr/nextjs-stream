@@ -124,6 +124,54 @@ describe('httpGet status handling', () => {
   })
 })
 
+describe('an HTTP/2 request', () => {
+  // The request function with a protocol lookup that can't be left wrong by
+  // a slow handshake (http2Protocol.ts)
+  const { http2Request } = require('@src/lib/http2Protocol')
+  const FILE_SERVER = 'https://files.example/api/system-status'
+
+  it('is sent through http2Request, still as HTTP/2', async () => {
+    mockGot.mockResolvedValue(reply(200, '{}'))
+
+    await httpGet(FILE_SERVER, { http2: true, retry: fast })
+
+    const sent = mockGot.mock.calls[0][1]
+    expect(sent.http2).toBe(true)
+    expect(sent.request).toBe(http2Request)
+  })
+
+  it('uses it on every attempt of a retried request', async () => {
+    mockGot
+      .mockRejectedValueOnce(Object.assign(new Error('Timed out resolving ALPN: 1500 ms'), { code: 'ETIMEDOUT' }))
+      .mockResolvedValueOnce(reply(200, '{}'))
+
+    await httpGet(FILE_SERVER, { http2: true, retry: fast })
+
+    expect(mockGot.mock.calls.map(([, options]) => options.request)).toEqual([http2Request, http2Request])
+  })
+
+  it('leaves a plain request to got', async () => {
+    mockGot.mockResolvedValue(reply(200, '{}'))
+
+    await httpGet(URL, { retry: fast })
+    await httpGet(URL, { http2: false, retry: fast })
+
+    for (const [, options] of mockGot.mock.calls) {
+      expect(options.http2).toBe(false)
+      expect(options).not.toHaveProperty('request')
+    }
+  })
+
+  it('keeps a request function the caller passed', async () => {
+    mockGot.mockResolvedValue(reply(200, '{}'))
+    const theirs = () => {}
+
+    await httpGet(FILE_SERVER, { http2: true, request: theirs, retry: fast })
+
+    expect(mockGot.mock.calls[0][1].request).toBe(theirs)
+  })
+})
+
 describe('what a failed request logs', () => {
   const { loggableUrl } = require('@src/lib/httpHelper')
   const FILE = 'https://files.example/movies/Caf%C3%A9%20(2001)/metadata.json?hash=0123abcd'

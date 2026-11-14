@@ -1,5 +1,6 @@
 // httpGet.js
 import got from 'got';
+import { http2Request } from './http2Protocol';
 
 /**
  * Sleep for a specified duration
@@ -104,6 +105,13 @@ export async function httpGet(url, options = {}) {
     // },
     ...restOptions,
   };
+
+  // An HTTP/2 request goes through a protocol lookup that never remembers a
+  // handshake that didn't finish (http2Protocol.ts). The library's own did,
+  // and one slow start-up left a host unreachable until the next restart.
+  if (requestOptions.http2 && !requestOptions.request) {
+    requestOptions.request = http2Request;
+  }
 
   // Add specific options for streaming if requested
   if (responseType === 'stream') {
