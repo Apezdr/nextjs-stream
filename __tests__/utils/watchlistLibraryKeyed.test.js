@@ -138,7 +138,8 @@ const {
 const { formatWatchlistItem, toggleWatchlist } = require('@src/utils/watchlist')
 const { FULL_LIBRARY } = require('@src/lib/roles/libraryScope')
 
-// Sintel as the demo library has it: a hand-written metadata.json, no TMDB id
+// Sintel as the demo library has it: a hand-written metadata.json, no TMDB
+// id, and (like every movie the sync writes) its release date as a Date
 const sintel = (fields = {}) => ({
   _id: new ObjectId(),
   mediaId: SINTEL,
@@ -147,7 +148,7 @@ const sintel = (fields = {}) => ({
   originalTitle: 'Sintel',
   posterURL: 'https://files.example/media/movies/Sintel/poster.jpg',
   posterBlurhash: 'iVBORw0KGgo',
-  metadata: { release_date: '2010-09-30' },
+  metadata: { release_date: new Date('2010-09-30T00:00:00.000Z') },
   ...fields,
 })
 const withTmdbId = (document) => ({ ...document, metadata: { ...document.metadata, id: SINTEL_TMDB_ID } })

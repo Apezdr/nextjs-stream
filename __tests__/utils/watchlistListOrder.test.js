@@ -70,6 +70,16 @@ describe('sortDetailsFrom', () => {
     expect(sortDetailsFrom({ title: '  ', releaseDate: '' })).toEqual({ releaseDate: null })
     expect(sortDetailsFrom({ releaseDate: '1979' })).toEqual({ releaseDate: null })
   })
+
+  it('takes the day from a Date, which is what a movie in the library resolves with', () => {
+    // The sync stores a movie's release date as a Date at UTC midnight. It
+    // used to count as no date, so no library movie had one stored to sort by.
+    expect(sortDetailsFrom({ title: 'Alien', releaseDate: new Date('1979-05-25T00:00:00.000Z') })).toEqual({
+      title: 'Alien',
+      releaseDate: '1979-05-25',
+    })
+    expect(sortDetailsFrom({ releaseDate: new Date('not a date') })).toEqual({ releaseDate: null })
+  })
 })
 
 describe('sortDetailUpdates', () => {
@@ -104,6 +114,16 @@ describe('sortDetailUpdates', () => {
     const unmarked = item({ tmdbId: 1, title: 'Alien', releaseDate: '1979-05-25' })
     const [update] = sortDetailUpdates([unmarked], resolved([{ tmdbId: 1, title: 'Alien', releaseDate: '1979-05-25' }]), now)
     expect(update.updateOne.update.$set[DETAILS_RESOLVED_AT]).toBe(now)
+  })
+
+  it('stores a library movie’s release day once, and writes nothing on the reads after', () => {
+    const inLibrary = resolved([{ tmdbId: 1, title: 'Alien', releaseDate: new Date('1979-05-25T00:00:00.000Z') }])
+
+    const [update] = sortDetailUpdates([item({ tmdbId: 1, title: 'Alien' })], inLibrary, now)
+    expect(update.updateOne.update.$set).toEqual({ title: 'Alien', releaseDate: '1979-05-25', [DETAILS_RESOLVED_AT]: now })
+
+    const stored = item({ tmdbId: 1, title: 'Alien', releaseDate: '1979-05-25', [DETAILS_RESOLVED_AT]: now })
+    expect(sortDetailUpdates([stored], inLibrary)).toEqual([])
   })
 
   it('leaves out failed lookups, so they are tried again', () => {

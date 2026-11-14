@@ -108,6 +108,23 @@ function customOrderKey(customOrder) {
 }
 
 /**
+ * A resolved title's release date as the day it is stored and sorted by
+ * (YYYY-MM-DD), or null. TMDB and the library's shows give that string. The
+ * library's movies give a Date (the sync stores metadata.release_date as one,
+ * at UTC midnight), which used to count as no date at all: no movie in the
+ * library had a release date stored, so a list sorted by release date put
+ * every one of them with the titles that have none.
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function releaseDay(value) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10)
+  }
+  return typeof value === 'string' && RELEASE_DATE_FORMAT.test(value) ? value : null
+}
+
+/**
  * The stored details a resolved title gives its item. A title comes only from
  * a lookup that found one, so a blank never replaces what the item has.
  * @param {Object} media - A batchResolveMedia entry that describes the title
@@ -115,11 +132,7 @@ function customOrderKey(customOrder) {
  */
 export function sortDetailsFrom(media) {
   const title = typeof media?.title === 'string' ? media.title.trim() : ''
-  const releaseDate =
-    typeof media?.releaseDate === 'string' && RELEASE_DATE_FORMAT.test(media.releaseDate)
-      ? media.releaseDate
-      : null
-  return { ...(title ? { title } : {}), releaseDate }
+  return { ...(title ? { title } : {}), releaseDate: releaseDay(media?.releaseDate) }
 }
 
 /**
