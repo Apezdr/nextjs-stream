@@ -15,6 +15,9 @@
 // Bearer client (the TV and desktop apps) is exempt: its token is the
 // identity, and can't change under a request.
 //
+// The browser's playback reads name the user the same way, and are refused
+// the same way: the page holds what they answer in memory, keyed by title.
+//
 // The "View as" guard runs first, in the proxy: a read-only view-as session's
 // write never gets here; with writes on, its page was rendered for the viewed
 // user, whose session it is, so the two match; after Stop the admin's cookie
@@ -44,6 +47,18 @@ export const PLAYBACK_USER_REQUIRED = {
  */
 export function playbackWriteHeaders(userId: unknown): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (userId !== null && userId !== undefined && String(userId) !== '') headers[PLAYBACK_USER_HEADER] = String(userId)
+  return headers
+}
+
+/**
+ * The headers of a browser playback read (the positions snapshot, one title's
+ * position): the user its page was rendered for. Positions are keyed by
+ * title, so an answer for whoever holds the cookie now would paint another
+ * account's progress onto this page; the server refuses that request instead.
+ */
+export function playbackReadHeaders(userId: unknown): Record<string, string> {
+  const headers: Record<string, string> = { Accept: 'application/json' }
   if (userId !== null && userId !== undefined && String(userId) !== '') headers[PLAYBACK_USER_HEADER] = String(userId)
   return headers
 }

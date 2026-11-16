@@ -152,3 +152,59 @@ it('keeps a fresh answer across a quick navigation, and does not ask again for i
   expect(store.getSnapshot().sessions).toHaveLength(1)
   expect(fetchImpl).toHaveBeenCalledTimes(1)
 })
+
+describe('an observer (a reader that must not cause a poll)', () => {
+  it('starts no poll and keeps none going', async () => {
+    const observer = jest.fn()
+    store.observe(observer)
+    await tick(POLL_MS * 3)
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(doc.listenerCount()).toBe(0)
+    expect(observer).not.toHaveBeenCalled()
+  })
+
+  it('hears each answer while a surface is polling, and nothing live once the last surface is gone', async () => {
+    const observer = jest.fn()
+    store.observe(observer)
+    const off = store.subscribe(() => {})
+    await settle()
+    expect(observer).toHaveBeenLastCalledWith({ sessions: [SESSION], offsetMs: 300_000 })
+
+    off()
+    // The store keeps its answer for a quick return; the observer is told what is known now: nothing
+    expect(observer).toHaveBeenLastCalledWith(NOTHING)
+    expect(store.getSnapshot().sessions).toHaveLength(1)
+  })
+
+  it('hears the kept answer again when a surface returns inside a poll, with no request made', async () => {
+    const observer = jest.fn()
+    store.observe(observer)
+    store.subscribe(() => {})()
+    await settle()
+    observer.mockClear()
+
+    clock += 2_000
+    store.subscribe(() => {})
+    expect(observer).toHaveBeenCalledTimes(1)
+    expect(observer).toHaveBeenLastCalledWith({ sessions: [SESSION], offsetMs: 300_000 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('hears nothing live after a failed poll, and stops hearing once it unsubscribes', async () => {
+    const observer = jest.fn()
+    const stop = store.observe(observer)
+    store.subscribe(() => {})
+    await settle()
+
+    fetchImpl.mockImplementation(async () => answer({ error: 'Failed to read live sessions' }, 500))
+    await tick(POLL_MS)
+    expect(observer).toHaveBeenLastCalledWith(NOTHING)
+
+    stop()
+    observer.mockClear()
+    fetchImpl.mockImplementation(async () => answer({ sessions: [SESSION], asOf: new Date(clock).toISOString() }))
+    await tick(POLL_MS)
+    expect(observer).not.toHaveBeenCalled()
+  })
+})

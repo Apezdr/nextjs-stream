@@ -37,6 +37,9 @@ function browserFetch(...args) {
  *   ended meanwhile.
  * - `offsetMs` is how far the server's clock is ahead of this one (from the
  *   response's `asOf`), for ticking a playing position.
+ * - `observe` is for a reader that must not cause a poll (the positions
+ *   store, WatchProgress/playbackStore.js): it is told each answer while a
+ *   surface is polling, and nothing live once the last surface is gone.
  *
  * A factory so tests get their own; the app uses the one below.
  *
@@ -54,11 +57,20 @@ export function createOwnSessionsStore({
   let inflight = null
   let timer = null
   const listeners = new Set()
+  const observers = new Set()
+
+  // An observer starts no poll, so what it is told is only as good as the
+  // polling: with no surface mounted nobody is asking, and nothing is known
+  function tellObservers() {
+    const known = listeners.size > 0 ? snapshot : NOTHING
+    for (const observer of observers) observer(known)
+  }
 
   function set(next) {
     if (next === snapshot) return
     snapshot = next
     for (const listener of listeners) listener()
+    tellObservers()
   }
 
   function settle(sessions, offsetMs) {
@@ -133,20 +145,38 @@ export function createOwnSessionsStore({
         if (stale()) poll()
         startTimer()
       }
+      // The answer kept across a quick navigation is known again
+      tellObservers()
     }
     return () => {
       listeners.delete(listener)
       if (listeners.size === 0) {
         stopTimer()
         getDocument()?.removeEventListener('visibilitychange', onVisibilityChange)
+        tellObservers()
       }
     }
   }
 
-  return { subscribe, getSnapshot: () => snapshot, poll }
+  /**
+   * Hears every answer without asking for one: `observer` is called with
+   * `{ sessions, offsetMs }` when the answer changes and when polling starts,
+   * and with nothing live when it stops. Returns the unsubscribe.
+   */
+  function observe(observer) {
+    observers.add(observer)
+    return () => observers.delete(observer)
+  }
+
+  return { subscribe, getSnapshot: () => snapshot, poll, observe }
 }
 
 const ownSessions = createOwnSessionsStore()
+
+/** The app's own sessions, for a reader that must not cause a poll. See `observe` above. */
+export function observeOwnLiveSessions(observer) {
+  return ownSessions.observe(observer)
+}
 
 function getServerSnapshot() {
   return NOTHING
