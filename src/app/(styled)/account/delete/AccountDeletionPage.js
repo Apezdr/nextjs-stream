@@ -7,6 +7,8 @@ import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import DeletionRequestForm from '@components/DeletionRequest/DeletionRequestForm'
 import DeletionStatusCard from '@components/DeletionRequest/DeletionStatusCard'
 
+const DELETE_REQUEST_URL = '/api/authenticated/account/delete-request'
+
 // The whole deletion-request lifecycle (existing request, initial load, submit/error/success)
 // transitions together, so it lives in one reducer instead of five separate setState hooks.
 const initialState = {
@@ -20,11 +22,12 @@ const initialState = {
 function reducer(state, action) {
   switch (action.type) {
     case 'loaded':
-      return { ...state, existingRequest: action.request ?? state.existingRequest, loading: false }
+      // What the server holds now: none, once a request is cancelled
+      return { ...state, existingRequest: action.request ?? null, loading: false }
     case 'submitStart':
       return { ...state, submitting: true, error: null }
     case 'submitSuccess':
-      return { ...state, submitting: false, existingRequest: action.request, success: true }
+      return { ...state, submitting: false, success: true }
     case 'submitError':
       return { ...state, submitting: false, error: action.error }
     case 'error':
@@ -32,6 +35,25 @@ function reducer(state, action) {
     default:
       return state
   }
+}
+
+/**
+ * The signed-in user's deletion request that is still open, or null. The route
+ * answers { success, data: { hasActiveRequest, request } } with their newest
+ * request whatever its status: one that was cancelled is no reason to hide
+ * the form.
+ */
+async function loadOpenRequest() {
+  try {
+    const response = await fetch(DELETE_REQUEST_URL)
+    if (response.ok) {
+      const { data } = await response.json()
+      return data?.hasActiveRequest ? data.request : null
+    }
+  } catch (err) {
+    console.error('Failed to check existing request:', err)
+  }
+  return null
 }
 
 export default function AccountDeletionPage({ user }) {
@@ -42,28 +64,22 @@ export default function AccountDeletionPage({ user }) {
   const router = useRouter()
 
   useEffect(() => {
-    checkExistingRequest()
+    let current = true
+    loadOpenRequest().then((request) => current && dispatch({ type: 'loaded', request }))
+    return () => {
+      current = false
+    }
   }, [])
 
   const checkExistingRequest = async () => {
-    try {
-      const response = await fetch('/api/authenticated/account/delete-request')
-      if (response.ok) {
-        const data = await response.json()
-        dispatch({ type: 'loaded', request: data.request })
-        return
-      }
-    } catch (err) {
-      console.error('Failed to check existing request:', err)
-    }
-    dispatch({ type: 'loaded' })
+    dispatch({ type: 'loaded', request: await loadOpenRequest() })
   }
 
   const handleSubmitRequest = async (formData) => {
     dispatch({ type: 'submitStart' })
 
     try {
-      const response = await fetch('/api/authenticated/account/delete-request', {
+      const response = await fetch(DELETE_REQUEST_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -78,8 +94,9 @@ export default function AccountDeletionPage({ user }) {
         throw new Error(errorData.error || 'Failed to submit deletion request')
       }
 
-      const data = await response.json()
-      dispatch({ type: 'submitSuccess', request: data.request })
+      // Read it back as the status card shows it
+      await checkExistingRequest()
+      dispatch({ type: 'submitSuccess' })
     } catch (err) {
       dispatch({ type: 'submitError', error: err.message })
       throw err
@@ -88,16 +105,10 @@ export default function AccountDeletionPage({ user }) {
 
   const handleCancelRequest = async (requestId, reason) => {
     try {
-      const response = await fetch('/api/authenticated/account/delete-request', {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          requestId,
-          reason,
-        }),
-      })
+      // The route reads both from the query string
+      const query = new URLSearchParams({ requestId })
+      if (reason?.trim()) query.set('reason', reason.trim())
+      const response = await fetch(`${DELETE_REQUEST_URL}?${query}`, { method: 'DELETE' })
 
       if (!response.ok) {
         const errorData = await response.json()

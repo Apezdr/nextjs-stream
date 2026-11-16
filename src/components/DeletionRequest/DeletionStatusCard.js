@@ -4,22 +4,22 @@ import { useState } from 'react'
 import { 
   CheckCircleIcon, 
   ClockIcon, 
-  ExclamationTriangleIcon,
   XCircleIcon,
   InformationCircleIcon
 } from '@heroicons/react/24/outline'
 import { formatDateToEST } from '@src/utils'
 
+// The statuses a request has (src/utils/accountDeletion.js), as the route sends them
 const statusConfig = {
   pending: {
     icon: ClockIcon,
-    color: 'text-yellow-600',
-    bgColor: 'bg-yellow-50 dark:bg-yellow-900/20',
-    borderColor: 'border-yellow-200 dark:border-yellow-800',
-    title: 'Deletion Request Pending',
-    description: 'Your account deletion request is being processed.'
+    color: 'text-orange-600',
+    bgColor: 'bg-orange-50 dark:bg-orange-900/20',
+    borderColor: 'border-orange-200 dark:border-orange-800',
+    title: 'Deletion Scheduled',
+    description: 'Your account is scheduled for deletion. You can still cancel this request.'
   },
-  email_verification_pending: {
+  pending_verification: {
     icon: InformationCircleIcon,
     color: 'text-blue-600',
     bgColor: 'bg-blue-50 dark:bg-blue-900/20',
@@ -27,21 +27,13 @@ const statusConfig = {
     title: 'Email Verification Required',
     description: 'Please check your email and click the verification link to confirm your deletion request.'
   },
-  verified: {
-    icon: CheckCircleIcon,
-    color: 'text-green-600',
-    bgColor: 'bg-green-50 dark:bg-green-900/20',
-    borderColor: 'border-green-200 dark:border-green-800',
-    title: 'Request Verified',
-    description: 'Your deletion request has been verified and is scheduled for processing.'
-  },
-  scheduled: {
+  processing: {
     icon: ClockIcon,
-    color: 'text-orange-600',
-    bgColor: 'bg-orange-50 dark:bg-orange-900/20',
-    borderColor: 'border-orange-200 dark:border-orange-800',
-    title: 'Deletion Scheduled',
-    description: 'Your account is scheduled for deletion. You can still cancel this request.'
+    color: 'text-red-600',
+    bgColor: 'bg-red-50 dark:bg-red-900/20',
+    borderColor: 'border-red-200 dark:border-red-800',
+    title: 'Deletion In Progress',
+    description: 'Your account is being deleted. This can no longer be cancelled.'
   },
   completed: {
     icon: CheckCircleIcon,
@@ -58,14 +50,6 @@ const statusConfig = {
     borderColor: 'border-gray-200 dark:border-gray-800',
     title: 'Request Cancelled',
     description: 'Your account deletion request has been cancelled.'
-  },
-  expired: {
-    icon: ExclamationTriangleIcon,
-    color: 'text-red-600',
-    bgColor: 'bg-red-50 dark:bg-red-900/20',
-    borderColor: 'border-red-200 dark:border-red-800',
-    title: 'Request Expired',
-    description: 'Your deletion request has expired and needs to be resubmitted.'
   }
 }
 
@@ -86,8 +70,10 @@ export default function DeletionStatusCard({
   const config = statusConfig[request.status] || statusConfig.pending
   const IconComponent = config.icon
 
-  const canCancel = ['pending', 'email_verification_pending', 'verified', 'scheduled'].includes(request.status)
-  const showGracePeriod = request.status === 'scheduled' && request.scheduledDeletionDate
+  // The request as GET /api/authenticated/account/delete-request sends it:
+  // { id, status, requestType, requestedAt, scheduledDeletionAt, reason, canCancel }
+  const canCancel = Boolean(request.canCancel)
+  const showGracePeriod = request.status === 'pending' && request.scheduledDeletionAt
 
   const handleCancelClick = () => {
     setShowCancelForm(true)
@@ -98,7 +84,7 @@ export default function DeletionStatusCard({
     setIsCancelling(true)
     
     try {
-      await onCancel(request._id, cancelReason)
+      await onCancel(request.id, cancelReason)
       setShowCancelForm(false)
       setCancelReason('')
     } catch (error) {
@@ -135,14 +121,14 @@ export default function DeletionStatusCard({
             <div className="text-sm">
               <span className="font-medium text-gray-700 dark:text-gray-300">Request ID:</span>
               <span className="ml-2 font-mono text-gray-600 dark:text-gray-400">
-                {request._id.slice(-8)}
+                {String(request.id).slice(-8)}
               </span>
             </div>
             
             <div className="text-sm">
               <span className="font-medium text-gray-700 dark:text-gray-300">Submitted:</span>
               <span className="ml-2 text-gray-600 dark:text-gray-400">
-                {formatDateToEST(request.createdAt)}
+                {formatDateToEST(request.requestedAt)}
               </span>
             </div>
 
@@ -173,17 +159,17 @@ export default function DeletionStatusCard({
                       Grace Period Active
                     </p>
                     <p className="text-sm text-orange-700 dark:text-orange-300">
-                      {calculateDaysRemaining(request.scheduledDeletionDate)} days remaining until permanent deletion
+                      {calculateDaysRemaining(request.scheduledDeletionAt)} days remaining until permanent deletion
                     </p>
                     <p className="text-xs text-orange-600 dark:text-orange-400 mt-1">
-                      Scheduled for: {formatDateToEST(request.scheduledDeletionDate)}
+                      Scheduled for: {formatDateToEST(request.scheduledDeletionAt)}
                     </p>
                   </div>
                 </div>
               </div>
             )}
 
-            {request.verificationToken && request.status === 'email_verification_pending' && (
+            {request.status === 'pending_verification' && (
               <div className="mt-4 p-3 bg-blue-100 dark:bg-blue-900/30 rounded-md">
                 <p className="text-sm text-blue-800 dark:text-blue-200">
                   <strong>Next Step:</strong> Check your email for a verification link. 
