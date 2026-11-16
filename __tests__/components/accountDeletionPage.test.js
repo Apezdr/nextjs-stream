@@ -2,14 +2,17 @@
  * The account page where a user asks for their own account to be deleted,
  * against the answers its route really gives:
  *
- *   GET    { success, data: { hasActiveRequest, request: { id, status, requestType, requestedAt, reason, canCancel } } }
+ *   GET    { success, data: { hasActiveRequest, request: { id, status, requestType, requestedAt, scheduledDeletionAt, reason, canCancel } } }
  *   POST   { reason }
  *   DELETE ?requestId=…
  *
  * The page used to read `data.request` (one level too high) and a card keyed
  * on `_id` and statuses no request has, so a pending request was never shown.
- * It also promised a deletion "after the 30-day grace period" that nothing
- * ever ran: an admin deletes accounts by hand, and the page now says so.
+ *
+ * A request made here is carried out by the server on its scheduledDeletionAt
+ * (src/lib/scheduledDeletions.ts), and the page names that date. A request
+ * with no date (one made on the public form) waits for an admin, and the page
+ * names none: a date on this page must be one something acts on.
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import AccountDeletionPage from '@src/app/(styled)/account/delete/AccountDeletionPage'
@@ -22,6 +25,7 @@ const pendingRequest = {
   status: 'pending',
   requestType: 'authenticated',
   requestedAt: '2026-11-10T12:00:00.000Z',
+  scheduledDeletionAt: '2026-12-10T12:00:00.000Z',
   reason: 'moving away',
   canCancel: true,
 }
@@ -58,29 +62,36 @@ const submit = () => screen.getByRole('button', { name: 'Request deletion' })
 beforeEach(() => jest.spyOn(console, 'error').mockImplementation(() => {}))
 afterEach(() => jest.restoreAllMocks())
 
-test('a waiting request is shown with when it was made, and no date is promised for the deletion', async () => {
+test('a waiting request is shown with when it was made and the date the account is deleted', async () => {
   fakeRoute({ request: pendingRequest })
   render(<AccountDeletionPage user={USER} />)
 
   expect(await screen.findByRole('heading', { name: 'Deletion requested' })).toBeInTheDocument()
-  expect(screen.getByText(/who delete accounts by hand\. There is no set date\./)).toBeInTheDocument()
+  // The date the server acts on, as the route sent it
+  expect(screen.getByText(/Your account will be deleted on/)).toHaveTextContent(
+    'Your account will be deleted on December 10, 2026, automatically, unless you cancel the request first. An admin may delete it sooner.'
+  )
+  expect(screen.getByText('Deletion date').nextSibling).toHaveTextContent('December 10, 2026')
   expect(screen.getByText('November 10, 2026')).toBeInTheDocument()
   expect(screen.getByText('e5f60001')).toBeInTheDocument()
   expect(screen.getByText('moving away')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Cancel the request and keep my account' })).toBeInTheDocument()
-  // Nothing runs on a timer: the page used to count down 30 days to nothing
-  expect(document.body).not.toHaveTextContent(/grace|scheduled|days remaining|30/i)
+  expect(screen.queryByText(/There is no set date/)).not.toBeInTheDocument()
   // The form to ask again is not offered while one is open
   expect(screen.queryByRole('button', { name: 'Request deletion' })).not.toBeInTheDocument()
   // Made from the account: no warning that someone else may have asked
   expect(screen.queryByText(/public form/)).not.toBeInTheDocument()
 })
 
-test('a request made with the account’s email on the public form says so, and can be cancelled', async () => {
-  const calls = fakeRoute({ request: { ...pendingRequest, requestType: 'public', reason: null } })
+test('a request made with the account’s email on the public form says so, names no date, and can be cancelled', async () => {
+  // It waits for an admin: nothing carries it out on a date, so none is shown
+  const calls = fakeRoute({ request: { ...pendingRequest, requestType: 'public', scheduledDeletionAt: null, reason: null } })
   render(<AccountDeletionPage user={USER} />)
 
   expect(await screen.findByText(/made with your email address on the public form, not from your account\. If it wasn’t\s+you, cancel it\./)).toBeInTheDocument()
+  expect(screen.getByText(/who delete accounts by hand\. There is no set date\./)).toBeInTheDocument()
+  expect(screen.queryByText('Deletion date')).not.toBeInTheDocument()
+  expect(screen.queryByText(/Your account will be deleted on/)).not.toBeInTheDocument()
 
   await click(screen.getByRole('button', { name: 'Cancel the request and keep my account' }))
 
@@ -93,13 +104,15 @@ test('with no request, or one that was cancelled, the form is offered and says w
   const { unmount } = render(<AccountDeletionPage user={USER} />)
 
   expect(await screen.findByRole('heading', { name: 'What happens next' })).toBeInTheDocument()
-  expect(screen.getByText('An admin deletes the account by hand. There is no set date, and nothing runs on a timer.')).toBeInTheDocument()
+  expect(
+    screen.getByText('Your account is deleted automatically 30 days after you ask. This page will show the date. An admin may delete it sooner.')
+  ).toBeInTheDocument()
+  expect(screen.getByText('Until it is deleted your account works as usual, and you can cancel the request on this page.')).toBeInTheDocument()
   expect(screen.getByRole('heading', { name: 'Removed for good' })).toBeInTheDocument()
   expect(screen.getByText('Your watch history and resume positions')).toBeInTheDocument()
   expect(screen.getByRole('heading', { name: 'Kept' })).toBeInTheDocument()
   expect(screen.getByText('A record of this deletion request, with your email address')).toBeInTheDocument()
   expect(screen.getByText(/Signed in as/)).toHaveTextContent('Signed in as Ada (ada@example.invalid)')
-  expect(document.body).not.toHaveTextContent(/grace|days remaining/i)
   // This page is for a signed-in account: it asks for no email address
   expect(screen.queryByLabelText(/email address/)).not.toBeInTheDocument()
   unmount()

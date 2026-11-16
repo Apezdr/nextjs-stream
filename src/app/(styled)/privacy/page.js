@@ -1,4 +1,5 @@
 import { siteTitle, adminUserEmails, showAdminEmails } from '@src/utils/config'
+import { DELETION_GRACE_DAYS } from '@src/utils/deletionSchedule'
 import Link from 'next/link'
 import { headers } from 'next/headers'
 
@@ -156,7 +157,7 @@ async function PrivacyPolicy() {
           <h3 className="text-xl font-medium mb-3">Data Deletion</h3>
           <ul className="list-disc pl-6 mb-4">
             <li><strong>Account Deletion:</strong> You can request deletion of your account and the data stored with it, signed in or by email address</li>
-            <li><strong>How It Is Handled:</strong> An administrator carries out each request by hand. Nothing is deleted automatically and there is no fixed date; until it is carried out, a request made from your account can be cancelled there</li>
+            <li><strong>How It Is Handled:</strong> A request made from your account is carried out automatically {DELETION_GRACE_DAYS} days after you make it, or sooner by an administrator; until then you can cancel it there. A request made by email address is not carried out automatically: an administrator checks it and carries it out by hand</li>
             <li><strong>What Is Removed:</strong> Your account and its sign-in (the link to your Google or Discord account, and every signed-in device), your watch history and resume positions, your notifications, and your private lists</li>
             <li><strong>What Is Kept:</strong> Lists you shared with other people (without an owner), requests you made for new titles in the administrators&apos; activity log, and a record of the deletion request with your email address</li>
           </ul>
@@ -173,7 +174,7 @@ async function PrivacyPolicy() {
             </h4>
             <p className="text-sm text-red-200 mb-3">
               You can request permanent deletion of your account and the personal data stored with it.
-              Once an administrator has carried it out, it cannot be undone.
+              Once it has been carried out, it cannot be undone.
             </p>
             <div className="flex flex-col sm:flex-row gap-2">
               <Link
@@ -201,7 +202,7 @@ async function PrivacyPolicy() {
 
           <h3 className="text-xl font-medium mb-3">Deleted Data</h3>
           <ul className="list-disc pl-6 mb-4">
-            <li><strong>Account Deletion:</strong> When an administrator carries out a deletion request, the data listed under Data Deletion is permanently deleted</li>
+            <li><strong>Account Deletion:</strong> When a deletion request is carried out, the data listed under Data Deletion is permanently deleted</li>
             <li><strong>Inactive Accounts:</strong> Retention policy determined by instance administrator</li>
             <li><strong>Logs:</strong> Administrative logs may be retained for system maintenance purposes</li>
           </ul>

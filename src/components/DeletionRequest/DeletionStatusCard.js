@@ -13,13 +13,14 @@ function longDate(value) {
 }
 
 /**
- * The signed-in user's deletion request while it waits for an admin, and the
- * way to cancel it. The request is as
- * GET /api/authenticated/account/delete-request sends it:
- * { id, status, requestType, requestedAt, reason, canCancel }.
+ * The signed-in user's deletion request while it waits, and the way to cancel
+ * it. The request is as GET /api/authenticated/account/delete-request sends
+ * it: { id, status, requestType, requestedAt, scheduledDeletionAt, reason, canCancel }.
  *
- * It names no date for the deletion: an admin deletes accounts by hand, and
- * nothing runs on a timer.
+ * A request with a scheduledDeletionAt is carried out by the server itself on
+ * that date (src/lib/scheduledDeletions.ts), and the card says which. One
+ * without (made on the public form) waits for an admin, and the card names no
+ * date: a date here must be one something acts on.
  *
  * @param {{ request: Object|null, onCancel: (requestId: string) => Promise<unknown> }} props
  *   `onCancel` throws when the request can't be cancelled; its message is shown here.
@@ -33,6 +34,7 @@ export default function DeletionStatusCard({ request, onCancel }) {
   }
 
   const requested = longDate(request.requestedAt)
+  const deletesOn = request.scheduledDeletionAt ? longDate(request.scheduledDeletionAt) : null
   // Made with the account's email on the public form: perhaps not by its owner
   const byEmail = request.requestType === 'public'
 
@@ -57,10 +59,18 @@ export default function DeletionStatusCard({ request, onCancel }) {
           <h2 id="deletion-request-heading" className="text-lg font-semibold text-white">
             Deletion requested
           </h2>
-          <p className="mt-1.5 text-sm leading-relaxed text-slate-300">
-            Your request is with the admins, who delete accounts by hand. There is no set date. Until one of them
-            deletes the account it works as usual, and you can cancel the request here.
-          </p>
+          {deletesOn ? (
+            <p className="mt-1.5 text-sm leading-relaxed text-slate-300">
+              Your account will be deleted on <strong className="font-semibold text-white">{deletesOn}</strong>,
+              automatically, unless you cancel the request first. An admin may delete it sooner. Until then it
+              works as usual.
+            </p>
+          ) : (
+            <p className="mt-1.5 text-sm leading-relaxed text-slate-300">
+              Your request is with the admins, who delete accounts by hand. There is no set date. Until one of
+              them deletes the account it works as usual, and you can cancel the request here.
+            </p>
+          )}
         </div>
       </div>
 
@@ -76,6 +86,12 @@ export default function DeletionStatusCard({ request, onCancel }) {
           <div>
             <dt className="text-slate-400">Requested</dt>
             <dd className="mt-1 text-white">{requested}</dd>
+          </div>
+        )}
+        {deletesOn && (
+          <div>
+            <dt className="text-slate-400">Deletion date</dt>
+            <dd className="mt-1 text-white">{deletesOn}</dd>
           </div>
         )}
         <div>

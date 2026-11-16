@@ -4,14 +4,16 @@ import { useEffect, useReducer } from 'react'
 import DeletionPageShell, { CARD, SECONDARY_BUTTON } from '@components/DeletionRequest/DeletionPageShell'
 import DeletionRequestForm from '@components/DeletionRequest/DeletionRequestForm'
 import DeletionStatusCard from '@components/DeletionRequest/DeletionStatusCard'
+import { DELETION_GRACE_DAYS } from '@src/utils/deletionSchedule'
 
 const DELETE_REQUEST_URL = '/api/authenticated/account/delete-request'
 
-// What happens to a request made here (the form numbers them)
+// What happens to a request made here (the form numbers them). The server
+// carries it out by itself when its date comes (src/lib/scheduledDeletions.ts)
 const STEPS = [
-  'Your request goes to the admins. Nothing is deleted yet.',
-  'An admin deletes the account by hand. There is no set date, and nothing runs on a timer.',
-  'Until then your account works as usual, and you can cancel the request on this page.',
+  'Your request is recorded. Nothing is deleted yet.',
+  `Your account is deleted automatically ${DELETION_GRACE_DAYS} days after you ask. This page will show the date. An admin may delete it sooner.`,
+  'Until it is deleted your account works as usual, and you can cancel the request on this page.',
 ]
 
 // What the page knows about the user's request, and what it last did:

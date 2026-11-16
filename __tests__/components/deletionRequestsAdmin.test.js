@@ -22,9 +22,30 @@ const userRequest = {
   status: 'pending',
   reason: 'moving away',
   requestedAt: '2026-11-10T12:00:00.000Z',
+  // The server carries it out by itself on this date
+  scheduledDeletionAt: '2026-12-10T12:00:00.000Z',
+  deletesAutomatically: true,
   canCancel: true,
   canExecute: true,
   waitingDays: 6,
+}
+// Carried out by the hourly check, no admin
+const automaticDeletion = {
+  _id: 'r-auto',
+  userId: 'u5',
+  email: 'ken@example.invalid',
+  requestType: 'authenticated',
+  status: 'completed',
+  requestedAt: '2026-10-01T09:00:00.000Z',
+  scheduledDeletionAt: '2026-10-31T09:00:00.000Z',
+  startedAt: '2026-10-31T09:20:00.000Z',
+  completedAt: '2026-10-31T09:20:01.000Z',
+  completedAutomatically: true,
+  deletionResults: { session: 1, user: 1 },
+  deletesAutomatically: false,
+  canCancel: false,
+  canExecute: false,
+  waitingDays: null,
 }
 // Made on the public form, by email address: nobody proved the address is theirs
 const publicRequest = {
@@ -35,6 +56,7 @@ const publicRequest = {
   status: 'pending',
   reason: null,
   requestedAt: '2026-11-16T07:00:00.000Z',
+  deletesAutomatically: false,
   canCancel: true,
   canExecute: true,
   waitingDays: 0,
@@ -75,6 +97,10 @@ const auditOf = {
     { id: 'a1', action: 'admin_request_created', performedAt: '2026-11-15T09:00:00.000Z', performedBy: { id: 'adm', name: 'Root', email: 'root@example.invalid' }, details: {} },
     { id: 'a2', action: 'deletion_started', performedAt: '2026-11-15T09:00:00.100Z', performedBy: { id: 'adm', name: 'Root', email: 'root@example.invalid' }, details: {} },
     { id: 'a3', action: 'deletion_completed', performedAt: '2026-11-15T09:00:01.000Z', performedBy: { id: 'adm', name: 'Root', email: 'root@example.invalid' }, details: {} },
+  ],
+  'r-auto': [
+    { id: 'c1', action: 'deletion_started', performedAt: '2026-10-31T09:20:00.000Z', performedBy: null, details: { automatic: true } },
+    { id: 'c2', action: 'deletion_completed', performedAt: '2026-10-31T09:20:01.000Z', performedBy: null, details: { automatic: true } },
   ],
   'r-stopped': [
     { id: 'b1', action: 'deletion_failed', performedAt: '2026-11-16T08:00:01.000Z', performedBy: { id: 'adm', name: 'Root', email: 'root@example.invalid' }, details: { step: 'lists', error: 'connection reset' } },
@@ -117,15 +143,17 @@ test('lists the requests the route sends, each with who asked and where it stand
   expect(global.fetch).toHaveBeenCalledWith(`${URL_REQUESTS}?limit=100`)
   expect(screen.queryByText('No deletion requests found.')).not.toBeInTheDocument()
 
-  expect(within(rowOf('ada@example.invalid')).getByText('Waiting for an admin')).toBeInTheDocument()
+  expect(within(rowOf('ada@example.invalid')).getByText('Waiting')).toBeInTheDocument()
   expect(within(rowOf('ada@example.invalid')).getByText('Requested by the user, signed in')).toBeInTheDocument()
+  // A signed-in user's request has a date the server acts on
+  expect(within(rowOf('ada@example.invalid')).getByText(/^Deletes automatically 12\/10\/2026/)).toBeInTheDocument()
   expect(within(rowOf('grace@example.invalid')).getByText('Completed')).toBeInTheDocument()
   expect(within(rowOf('grace@example.invalid')).getByText('Deleted by an admin')).toBeInTheDocument()
   expect(within(rowOf('linus@example.invalid')).getByText('Started, not finished')).toBeInTheDocument()
 
   // The tabs count the statuses requests really have
   expect(screen.getByRole('button', { name: 'All (3)' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Waiting for an admin (1)' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Waiting (1)' })).toBeInTheDocument()
   // No request waits for an email to be verified: the app sends none
   expect(screen.queryByRole('button', { name: /verification/i })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Started, not finished (1)' })).toBeInTheDocument()
@@ -174,7 +202,7 @@ test('a deletion that stopped says where, and "Run again" executes the same requ
   await waitFor(() => expect(global.fetch.mock.calls.filter(([, options]) => !options).length).toBe(2))
 })
 
-test('a waiting request says how long it has waited, and promises no date', async () => {
+test('a signed-in user’s request says when the server deletes it, and that deleting now ends the wait early', async () => {
   const posts = fakeRoute([userRequest])
   render(<DeletionRequestsAdmin />)
   await screen.findByText('ada@example.invalid')
@@ -182,15 +210,30 @@ test('a waiting request says how long it has waited, and promises no date', asyn
 
   expect(within(row).getByText('Waiting:')).toBeInTheDocument()
   expect(within(row).getByText('6 days')).toBeInTheDocument()
-  // Nothing runs on a timer, so nothing on the page may say one does
-  expect(document.body).not.toHaveTextContent(/grace|scheduled|days remaining/i)
-  expect(screen.getByText(/Nothing here runs on\s+its own/)).toBeInTheDocument()
+  expect(within(row).getByText('Next:').nextSibling).toHaveTextContent(/^Deletes automatically 12\/10\/2026/)
+  expect(screen.getByText(/carried out automatically 30 days later, unless they cancel\s+or you act first/)).toBeInTheDocument()
 
   await click(within(row).getByRole('button', { name: 'Delete this account now' }))
 
   const confirmation = within(rowOf('ada@example.invalid')).getByText(/It can’t be undone\./)
+  expect(confirmation).toHaveTextContent(/The user has until 12\/10\/2026.* to cancel: deleting now ends that early\./)
   expect(confirmation).not.toHaveTextContent(/public form/)
   expect(actions(posts)).toEqual([])
+})
+
+test('a deletion the server carried out says so: no admin is named, and it is marked automatic', async () => {
+  fakeRoute([automaticDeletion])
+  render(<DeletionRequestsAdmin />)
+  await screen.findByText('ken@example.invalid')
+
+  const row = await openDetails('ken@example.invalid')
+
+  expect(within(row).getByText('Completed:').nextSibling).toHaveTextContent(/\(automatically\)$/)
+  expect(await within(row).findByText('Deletion started')).toBeInTheDocument()
+  expect(within(row).getAllByText(/automatically, by the server’s hourly check/)).toHaveLength(2)
+  expect(within(row).queryByText(/ by Root/)).not.toBeInTheDocument()
+  // Finished: it waits for nothing
+  expect(within(row).queryByText('Next:')).not.toBeInTheDocument()
 })
 
 test('a request from the public form is marked as unverified in the list, the details and the confirmation', async () => {
@@ -199,6 +242,9 @@ test('a request from the public form is marked as unverified in the list, the de
   await screen.findByText('alan@example.invalid')
 
   expect(within(rowOf('alan@example.invalid')).getByText('Public form, address not verified')).toBeInTheDocument()
+  // No date: the server never carries one of these out
+  expect(within(rowOf('alan@example.invalid')).getByText('Waits for an admin')).toBeInTheDocument()
+  expect(within(rowOf('alan@example.invalid')).queryByText(/Deletes automatically/)).not.toBeInTheDocument()
 
   const row = await openDetails('alan@example.invalid')
 
@@ -209,7 +255,8 @@ test('a request from the public form is marked as unverified in the list, the de
 
   await click(within(row).getByRole('button', { name: 'Delete this account now' }))
 
-  expect(within(rowOf('alan@example.invalid')).getByText(/It can’t be undone\. Nobody has proved this request is theirs: it came from the public form\./)).toBeInTheDocument()
+  const confirmation = within(rowOf('alan@example.invalid')).getByText(/It can’t be undone\. Nobody has proved this request is theirs: it came from the public form\./)
+  expect(confirmation).not.toHaveTextContent(/to cancel: deleting now ends that early/)
   expect(actions(posts)).toEqual([])
 
   await click(within(rowOf('alan@example.invalid')).getByRole('button', { name: 'Confirm Deletion' }))

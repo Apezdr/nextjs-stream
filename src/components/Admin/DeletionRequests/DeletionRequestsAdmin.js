@@ -11,6 +11,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { toast } from 'react-toastify'
 import { formatDateToEST } from '@src/utils'
+import { DELETION_GRACE_DAYS } from '@src/utils/deletionSchedule'
 
 const REQUESTS_URL = '/api/authenticated/admin/deletion-requests'
 
@@ -23,10 +24,12 @@ const PAGE_SIZE = 100
 // backdrop whatever the device's theme is, and a colour that follows the
 // device left this page's title and labels dark on dark in a light theme.
 const statusConfig = {
+  // Waiting for its date (a signed-in user's request) or for an admin (one
+  // from the public form): each row says which
   pending: {
     icon: ClockIcon,
     badge: 'bg-amber-400/15 text-amber-200',
-    label: 'Waiting for an admin'
+    label: 'Waiting'
   },
   processing: {
     icon: ExclamationTriangleIcon,
@@ -52,6 +55,14 @@ const typeLabels = {
   public: 'Public form, address not verified',
   admin: 'Deleted by an admin'
 }
+
+/**
+ * What a waiting request waits for. One with a date is carried out by the
+ * server itself on that date (src/lib/scheduledDeletions.ts); one without
+ * waits for an admin. The route sends `deletesAutomatically` with each.
+ */
+const waitsFor = (request) =>
+  request.deletesAutomatically ? `Deletes automatically ${when(request.scheduledDeletionAt)}` : 'Waits for an admin'
 
 const SECONDARY_BUTTON =
   'inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-300 disabled:cursor-not-allowed disabled:opacity-50'
@@ -223,8 +234,9 @@ export default function DeletionRequestsAdmin() {
             Account Deletion Requests
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-300">
-            Deletions people asked for, and accounts admins deleted from the Users page. Nothing here runs on
-            its own: a request waits until an admin deletes the account or cancels the request.
+            Deletions people asked for, and accounts admins deleted from the Users page. A request a user made
+            while signed in is carried out automatically {DELETION_GRACE_DAYS} days later, unless they cancel
+            or you act first. A request from the public form waits for you: nobody verified its address.
           </p>
         </div>
         <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
@@ -302,6 +314,9 @@ export default function DeletionRequestsAdmin() {
                         <span className={`text-xs ${request.requestType === 'public' ? 'font-medium text-amber-200' : 'text-slate-400'}`}>
                           {typeLabels[request.requestType] || request.requestType}
                         </span>
+                        {request.status === 'pending' && (
+                          <span className="text-xs text-slate-400">{waitsFor(request)}</span>
+                        )}
                       </div>
 
                       <div className="flex items-center space-x-4">
@@ -401,6 +416,7 @@ function AuditLog({ requestId, version }) {
               <span className="text-slate-400">{when(entry.performedAt)}</span>{' '}
               <span className="font-medium text-slate-100">{auditLabels[entry.action] || entry.action}</span>
               {entry.performedBy && <> by {entry.performedBy.name || entry.performedBy.email}</>}
+              {!entry.performedBy && entry.details?.automatic && <> automatically, by the server’s hourly check</>}
               {entry.action === 'deletion_failed' && entry.details?.error && <>: {entry.details.error}</>}
             </li>
           ))}
@@ -471,8 +487,14 @@ function RequestDetails({ request, onAction, actionLoading }) {
                 {request.waitingDays === 0 ? 'less than a day' : `${request.waitingDays} day${request.waitingDays !== 1 ? 's' : ''}`}
               </Detail>
             )}
+            {request.status === 'pending' && <Detail label="Next">{waitsFor(request)}</Detail>}
             {request.startedAt && <Detail label="Started">{when(request.startedAt)}</Detail>}
-            {request.completedAt && <Detail label="Completed">{when(request.completedAt)}</Detail>}
+            {request.completedAt && (
+              <Detail label="Completed">
+                {when(request.completedAt)}
+                {request.completedAutomatically ? ' (automatically)' : ''}
+              </Detail>
+            )}
             {request.cancelledAt && (
               <Detail label="Cancelled">
                 {when(request.cancelledAt)}
@@ -522,6 +544,8 @@ function RequestDetails({ request, onAction, actionLoading }) {
               <p className="text-sm leading-relaxed text-slate-200">
                 This deletes {request.email}’s account and its data now. It can’t be undone.
                 {unverified && !stopped && ' Nobody has proved this request is theirs: it came from the public form.'}
+                {request.deletesAutomatically &&
+                  ` The user has until ${when(request.scheduledDeletionAt)} to cancel: deleting now ends that early.`}
               </p>
             ) : (
               <textarea
