@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { adminGate } from '@src/lib/roles/gates'
 import { 
   getDeletionRequests,
+  getDeletionRequestById,
   cancelDeletionRequest,
   executeAccountDeletion,
   getDeletionAuditLogs,
@@ -143,20 +144,16 @@ export async function POST(request) {
  */
 async function handleCancelRequest(requestId, adminId, reason) {
   try {
-    // Get the request first to get user info
-    const { requests } = await getDeletionRequests(
-      { _id: requestId },
-      { page: 0, limit: 1 }
-    )
+    // The request asked for, by its id: its status and email are what the
+    // checks and the notifications below use
+    const deletionRequest = await getDeletionRequestById(requestId)
 
-    if (requests.length === 0) {
+    if (!deletionRequest) {
       return NextResponse.json(
         { error: 'Deletion request not found' },
         { status: 404 }
       )
     }
-
-    const deletionRequest = requests[0]
 
     // Cancel the request
     const cancelledRequest = await cancelDeletionRequest(
@@ -215,20 +212,16 @@ async function handleCancelRequest(requestId, adminId, reason) {
  */
 async function handleExecuteRequest(requestId, adminId) {
   try {
-    // Get the request first to get user info
-    const { requests } = await getDeletionRequests(
-      { _id: requestId },
-      { page: 0, limit: 1 }
-    )
+    // The request asked for, by its id: its status and email are what the
+    // checks and the notifications below use
+    const deletionRequest = await getDeletionRequestById(requestId)
 
-    if (requests.length === 0) {
+    if (!deletionRequest) {
       return NextResponse.json(
         { error: 'Deletion request not found' },
         { status: 404 }
       )
     }
-
-    const deletionRequest = requests[0]
 
     // Validate that the request can be executed
     if (deletionRequest.status !== 'pending') {
@@ -263,13 +256,10 @@ async function handleExecuteRequest(requestId, adminId) {
 
     // Get the request for failure notification
     try {
-      const { requests } = await getDeletionRequests(
-        { _id: requestId },
-        { page: 0, limit: 1 }
-      )
+      const failedRequest = await getDeletionRequestById(requestId)
 
-      if (requests.length > 0) {
-        await sendDeletionFailureNotification(requests[0], error)
+      if (failedRequest) {
+        await sendDeletionFailureNotification(failedRequest, error)
       }
     } catch (notificationError) {
       console.error('Error sending failure notification:', notificationError)

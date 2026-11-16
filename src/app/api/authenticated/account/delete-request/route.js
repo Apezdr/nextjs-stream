@@ -3,7 +3,8 @@ import { signedInGate } from '@src/lib/roles/gates'
 import { 
   createAuthenticatedDeletionRequest,
   cancelDeletionRequest,
-  getDeletionRequests 
+  getDeletionRequests,
+  getDeletionRequestById
 } from '@src/utils/accountDeletion'
 import { 
   sendDeletionRequestConfirmation,
@@ -168,20 +169,16 @@ export async function DELETE(request) {
       )
     }
 
-    // Validate that the request belongs to the authenticated user
-    const { requests } = await getDeletionRequests(
-      { _id: requestId, userId: user.id },
-      { page: 0, limit: 1 }
-    )
+    // The request asked for, and only when it is this user's own: anyone
+    // else's answers as if it did not exist
+    const deletionRequest = await getDeletionRequestById(requestId)
 
-    if (requests.length === 0) {
+    if (!deletionRequest || String(deletionRequest.userId) !== String(user.id)) {
       return NextResponse.json(
         { error: 'Deletion request not found or access denied' },
         { status: 404 }
       )
     }
-
-    const deletionRequest = requests[0]
 
     // Check if request can be cancelled
     if (!['pending', 'pending_verification'].includes(deletionRequest.status)) {

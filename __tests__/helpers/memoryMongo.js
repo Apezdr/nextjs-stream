@@ -1,9 +1,10 @@
 /**
  * An in-memory MongoDB with just enough of the driver for a whole sync run:
  * the repositories, pre-tag, the tick skip check, title selection, post-sync
- * cleanup and the record of applied passes. Like MongoDB it stores a field set
- * to `undefined` as `null`, and hands out copies. Deletes are logged
- * (`collection.deleted`), so a test can compare what two runs deleted.
+ * cleanup and the record of applied passes, and for an account deletion. Like
+ * MongoDB it stores a field set to `undefined` as `null`, and hands out
+ * copies. Deletes are logged (`collection.deleted`), so a test can compare
+ * what two runs deleted.
  */
 
 const isEqual = require('lodash/isEqual')
@@ -52,6 +53,7 @@ function matchesOperators(value, condition) {
       case '$gt': return v != null && v > operand
       case '$gte': return v != null && v >= operand
       case '$type': return operand === 'string' ? typeof value === 'string' : operand === 'object' ? value !== null && typeof value === 'object' : false
+      case '$elemMatch': return Array.isArray(value) && value.some((element) => matches(element, operand))
       default: throw new Error(`memoryMongo: unsupported operator ${op}`)
     }
   })
@@ -97,6 +99,11 @@ function applyUpdate(doc, update) {
   for (const [path, value] of Object.entries(stored(update.$set || {}))) setPath(doc, path, value)
   for (const path of unsetKeys) unsetPath(doc, path)
   for (const [path, by] of Object.entries(update.$inc || {})) setPath(doc, path, (read(doc, path) || 0) + by)
+  // $pull with a document condition: the array elements matching it go
+  for (const [path, condition] of Object.entries(stored(update.$pull || {}))) {
+    const list = read(doc, path)
+    if (Array.isArray(list)) setPath(doc, path, list.filter((element) => !matches(element, condition)))
+  }
 }
 
 /** The plain equality fields of a filter (what an upsert inserts). */
@@ -166,6 +173,13 @@ function createMemoryMongo() {
         const before = JSON.stringify(doc)
         applyUpdate(doc, update)
         return { matchedCount: 1, modifiedCount: JSON.stringify(doc) === before ? 0 : 1 }
+      },
+      /** As the driver answers by default: the document itself, here always as it is after the update. */
+      async findOneAndUpdate(filter, update) {
+        const doc = c.docs.find((d) => matches(d, filter))
+        if (!doc) return null
+        applyUpdate(doc, update)
+        return clone(doc)
       },
       async updateMany(filter, update) {
         let modifiedCount = 0

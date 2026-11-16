@@ -10,6 +10,19 @@ import { deletePlaybackForUser } from '@src/utils/watchHistory/database'
  * Handles GDPR/CCPA compliant account deletion with audit logging
  */
 
+const HEX_ID = /^[0-9a-fA-F]{24}$/
+
+/** An id as an ObjectId, or null when it isn't one (missing, malformed, another type). */
+function toObjectIdOrNull(value) {
+  if (value instanceof ObjectId) return value
+  if (typeof value === 'string' && HEX_ID.test(value)) return new ObjectId(value)
+  // An ObjectId from another copy of the driver
+  if (value && typeof value === 'object' && value._bsontype === 'ObjectId' && typeof value.toHexString === 'function') {
+    return new ObjectId(value.toHexString())
+  }
+  return null
+}
+
 /**
  * Create a deletion request for an authenticated user
  * @param {string} userId - User ID requesting deletion
@@ -227,24 +240,67 @@ export async function verifyDeletionRequest(token) {
 }
 
 /**
+ * One deletion request by its id, or null when there is none (or the id isn't one).
+ * @param {string|ObjectId} deletionRequestId - Deletion request ID
+ * @returns {Promise<Object|null>} The request
+ */
+export async function getDeletionRequestById(deletionRequestId) {
+  const _id = toObjectIdOrNull(deletionRequestId)
+  if (!_id) return null
+  const client = await clientPromise
+  return client.db('Users').collection('DeletionRequests').findOne({ _id })
+}
+
+/**
+ * The filters getDeletionRequests applies, and how each becomes a query. One
+ * it doesn't know is refused: it used to be dropped, and a caller asking for
+ * one request by id, or for one user's requests, got the newest request of
+ * anyone's instead.
+ */
+const REQUEST_FILTERS = {
+  status: (value) => value,
+  requestType: (value) => value,
+  email: (value) => ({ $regex: value, $options: 'i' }),
+  scheduledDeletionAt: (value) => value,
+  _id: (value) => requireRequestFilterId('_id', value),
+  userId: (value) => requireRequestFilterId('userId', value),
+}
+
+/** An id filter that is set must be an id: an unset one would match everyone's requests. */
+function requireRequestFilterId(name, value) {
+  const id = toObjectIdOrNull(value)
+  if (!id) throw new Error(`getDeletionRequests: the ${name} filter needs a valid id`)
+  return id
+}
+
+function deletionRequestQuery(filters) {
+  const query = {}
+  for (const [name, value] of Object.entries(filters)) {
+    const toQuery = Object.hasOwn(REQUEST_FILTERS, name) ? REQUEST_FILTERS[name] : null
+    if (!toQuery) throw new Error(`getDeletionRequests: no "${name}" filter`)
+    // The ids fail closed (above); the others are optional, as the admin list passes them
+    if (name === '_id' || name === 'userId') query[name] = toQuery(value)
+    else if (value) query[name] = toQuery(value)
+  }
+  return query
+}
+
+/**
  * Get all deletion requests (admin function)
- * @param {Object} filters - Optional filters
+ * @param {Object} filters - Optional filters: status, requestType, email, scheduledDeletionAt, _id, userId
  * @param {Object} pagination - Pagination options
  * @returns {Promise<Object>} Deletion requests with pagination info
  */
 export async function getDeletionRequests(filters = {}, pagination = { page: 0, limit: 20 }) {
+  // Before the database is touched: a filter that can't be applied is refused
+  const query = deletionRequestQuery(filters)
+
   const client = await clientPromise
   const db = client.db('Users')
-  
+
   const { page, limit } = pagination
   const skip = page * limit
-  
-  // Build query
-  const query = {}
-  if (filters.status) query.status = filters.status
-  if (filters.requestType) query.requestType = filters.requestType
-  if (filters.email) query.email = { $regex: filters.email, $options: 'i' }
-  
+
   // Get total count
   const total = await db.collection('DeletionRequests').countDocuments(query)
   
@@ -289,12 +345,17 @@ export async function getDeletionRequests(filters = {}, pagination = { page: 0, 
  * @returns {Promise<Object>} Updated deletion request
  */
 export async function cancelDeletionRequest(deletionRequestId, performedBy, reason = null) {
+  const requestId = toObjectIdOrNull(deletionRequestId)
+  if (!requestId) {
+    throw new Error('Deletion request not found or cannot be cancelled')
+  }
+
   const client = await clientPromise
   const db = client.db('Users')
-  
+
   const deletionRequest = await db.collection('DeletionRequests').findOneAndUpdate(
-    { 
-      _id: new ObjectId(deletionRequestId),
+    {
+      _id: requestId,
       status: { $in: ['pending', 'pending_verification'] }
     },
     { 
@@ -315,7 +376,7 @@ export async function cancelDeletionRequest(deletionRequestId, performedBy, reas
   
   // Create audit log entry
   await createDeletionAuditLog({
-    deletionRequestId: new ObjectId(deletionRequestId),
+    deletionRequestId: requestId,
     action: 'request_cancelled',
     performedBy,
     details: { reason }
