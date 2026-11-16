@@ -9,20 +9,21 @@ request** and run the same deletion (`src/utils/accountDeletion.js`).
 
 | Who asks | Where | Request type | What happens |
 |----------|-------|--------------|--------------|
-| The user, signed in | `/account/delete` | `authenticated` | The request waits for an admin |
-| Anyone, by email address | `/privacy/delete-account` | `public` | The request waits for an admin, marked as unverified |
+| The user, signed in | `/account/delete` | `authenticated` | The server deletes the account 30 days later, unless the user cancels or an admin acts sooner |
+| Anyone, by email address | `/privacy/delete-account` | `public` | The request waits for an admin, marked as unverified. Never automatic |
 | An admin | The Users page's "Delete account" | `admin` | The request is recorded and run at once |
 
-Three things this system does **not** do, which earlier versions of the code
-and of this document claimed:
+Two things this system does **not** do:
 
-- **Nothing runs on a schedule.** There is no grace period, no countdown and no
-  automatic deletion. A request waits until an admin deletes the account or
-  cancels the request, on `/admin/deletion-requests`.
 - **No email is sent.** The app has no mail set up. Notifications are in the app
   (the bell). No page or message may tell anyone to check their inbox.
-- **A request by email address is not verified.** Nothing proves the address
-  belongs to whoever typed it. See [The public form](#the-public-form).
+- **A request by email address is not verified**, and so is never carried out
+  automatically. Nothing proves the address belongs to whoever typed it: with a
+  date on it, anyone could delete someone else's account by typing their
+  address and waiting. See [The public form](#the-public-form).
+
+A date shown to anyone must be one the server acts on. Earlier versions of the
+pages counted down 30 days to a deletion nothing ran.
 
 ## Architecture
 
@@ -37,11 +38,16 @@ In the `Users` database:
 
 1. **`src/utils/accountDeletion.js`** - creating, cancelling and running
    requests; the deletion's steps; the audit log
-2. **`src/utils/deletionEmailService.js`** - the in-app notifications of the
+2. **`src/lib/scheduledDeletions.ts`** - the server's own hourly check: the
+   reminders and the deletions that are due
+   ([The automatic check](#the-automatic-check))
+3. **`src/utils/deletionSchedule.js`** - the 30 days and the 7-day reminder, for
+   the server and for the pages that state them
+4. **`src/utils/deletionEmailService.js`** - the in-app notifications of the
    flow, to the account and to the admins (it sends no email, whatever its name)
-3. **`src/utils/rateLimiter.js`** - in-memory limit on the public form
-4. **API routes** - below
-5. **Pages** - `/account/delete`, `/privacy/delete-account`,
+5. **`src/utils/rateLimiter.js`** - in-memory limit on the public form
+6. **API routes** - below
+7. **Pages** - `/account/delete`, `/privacy/delete-account`,
    `/admin/deletion-requests`, and the dialog on `/admin/users`. They share
    `src/components/DeletionRequest/`. The app is dark whatever the device's
    theme is, so these components use no `dark:` variants (Tailwind's default
@@ -55,19 +61,26 @@ In the `Users` database:
   requestType,                   // 'authenticated' | 'public' | 'admin'
   status,                        // 'pending' | 'processing' | 'completed' | 'cancelled'
   reason, requestedAt,
+  scheduledDeletionAt,           // 'authenticated' only: when the server carries it out
+  reminderSentAt,                // the account was reminded (once)
   requestedBy,                   // the admin, for requestType 'admin'
   metadata: { clientIp },        // for requestType 'public'
   // once a deletion has started:
   startedAt, lastRunAt, lastRunBy, progress, deletionResults, lastError,
-  completedAt, completedBy,
+  lastRunAutomatic,              // the hourly check ran it, no admin
+  automaticFailures,             // how many automatic runs stopped part-way
+  runLeaseUntil,                 // a run holds the request until then
+  completedAt, completedBy, completedAutomatically,
   // once cancelled:
   cancelledAt, cancelledBy, cancellationReason, supersededBy
 }
 ```
 
-`pending`: waiting for an admin; it can be cancelled, by the account or by an
-admin. `processing`: a deletion has started; it can only be finished.
-`completed` only after the deletion's last step.
+`pending`: waiting, for its date (a signed-in user's request) or for an admin
+(one from the public form); it can be cancelled, by the account or by an
+admin, and an admin can carry it out before its date. `processing`: a deletion
+has started; it can only be finished. `completed` only after the deletion's
+last step.
 
 An account has at most one open request (`pending` or `processing`).
 
@@ -81,22 +94,24 @@ Body `{ "reason": "optional, at most 500 characters" }`. Answers 409 when the
 account already has an open request.
 
 ```json
-{ "success": true, "data": { "requestId": "…", "status": "pending", "requestedAt": "…" } }
+{ "success": true, "data": { "requestId": "…", "status": "pending", "requestedAt": "…", "scheduledDeletionAt": "…" } }
 ```
 
 #### GET `/api/authenticated/account/delete-request`
 
 The user's newest request, whatever its status. `hasActiveRequest` is true
-while it is `pending`. `requestType` is `public` when it was made with the
-account's email on the public form: the page then says so, since the account's
-owner may not have asked.
+while it is `pending`. `scheduledDeletionAt` is the date the server deletes the
+account, which the page shows; it is null for a request that waits for an
+admin. `requestType` is `public` when it was made with the account's email on
+the public form: the page then says so, since the account's owner may not have
+asked.
 
 ```json
 {
   "success": true,
   "data": {
     "hasActiveRequest": true,
-    "request": { "id": "…", "status": "pending", "requestType": "authenticated", "requestedAt": "…", "reason": "…", "canCancel": true }
+    "request": { "id": "…", "status": "pending", "requestType": "authenticated", "requestedAt": "…", "scheduledDeletionAt": "…", "reason": "…", "canCancel": true }
   }
 }
 ```
@@ -121,9 +136,10 @@ A well-formed request always gets the same answer:
 
 A request is recorded only when the address has an account (matched whatever
 its letters' case) with no open request. It is recorded as `pending`, type
-`public`; the account is told in the app and can cancel it; the admins are
-told, and the Deletion Requests page marks it "Public form, address not
-verified" and warns before deleting.
+`public`, with no date: the automatic check never carries it out. The account
+is told in the app and can cancel it; the admins are told, and the Deletion
+Requests page marks it "Public form, address not verified" and warns before
+deleting.
 
 **Keep the answer uniform.** No 404 for an unknown address, no 409 for one
 already asked for, no status in the body, and no GET that looks a request up by
@@ -140,8 +156,9 @@ verification step is between this route and the request becoming `pending`.
 
 The requests, newest first. Query: `page` (default 0), `limit` (default 20, at
 most 100), `status`, `requestType`, `email`. Each request also carries
-`canCancel`, `canExecute` and `waitingDays` (whole days a `pending` request has
-waited).
+`canCancel`, `canExecute`, `waitingDays` (whole days a `pending` request has
+waited) and `deletesAutomatically` (a `pending` request with a date: the server
+carries it out by itself).
 
 #### POST `/api/authenticated/admin/deletion-requests`
 
@@ -149,10 +166,11 @@ waited).
 { "action": "cancel|execute|get-audit-logs", "requestId": "…", "reason": "optional, for cancel" }
 ```
 
-`execute` runs a request that has not started (`pending`) and runs again one
-whose last run stopped part-way (`processing`). A run that stops answers 500
-with `code: "DELETION_INCOMPLETE"`; the request stays `processing` and is run
-again with the same call.
+`execute` runs a request that has not started (`pending`, before its date
+too) and runs again one whose last run stopped part-way (`processing`). A run
+that stops answers 500 with `code: "DELETION_INCOMPLETE"`; the request stays
+`processing` and is run again with the same call. A request another run holds
+at that moment answers 409 `DELETION_RUNNING`, and nothing is removed.
 
 #### DELETE `/api/authenticated/admin/deletion-requests?action=bulk-cancel&requestIds=<id1,id2>`
 
@@ -186,6 +204,40 @@ and no audit entry would be written. It is turned off
 answers 404. better-auth's self-service `/delete-user` is off by default and
 stays off. `__tests__/lib/authDisabledPaths.test.js` holds both, and fails if
 anything in `src` calls `removeUser`.
+
+## The automatic check
+
+`src/lib/scheduledDeletions.ts`, started from `src/instrumentation.ts` when the
+server starts: one check a minute after the start, then one an hour. Each check
+
+1. reminds, in the app, the accounts whose date is 7 days away or less (once
+   each: `reminderSentAt`), and
+2. carries out the requests that are due: `pending`, type `authenticated`,
+   `scheduledDeletionAt` passed. It runs the same deletion an admin's click
+   does, in nobody's name: the audit entries have no person and
+   `details.automatic: true`, and the admins get a notification.
+
+What it never does (`isDueForAutomaticRun` in `src/utils/accountDeletion.js`,
+checked again inside the run itself): carry out a request from the public
+form, a request with no date, or take up a run an admin started.
+
+The timer is only a heartbeat. What is due, and how far a deletion got, is in
+the database on each request:
+
+- A restart, or a missed hour, delays a deletion and never loses one.
+- A deletion that stops part-way is taken up by the next check, up to 5 times
+  (`MAX_AUTOMATIC_ATTEMPTS`, one notification to the admins each), then it
+  waits for an admin's "Run again".
+- One run at a time holds a request (`runLeaseUntil`, renewed after each step,
+  ten minutes at most without progress). The check in two server processes, or
+  the check and an admin, cannot both delete the same account; the loser
+  removes nothing.
+- A user who cancels in the same instant wins or loses in one database write:
+  a cancelled request is never carried out.
+
+This works because the app is one long-running Node server. On hosting where
+no process stays alive between requests the timer would never tick, and
+`runScheduledDeletions()` would need calling from outside on a schedule.
 
 ## How a deletion runs
 
@@ -251,17 +303,21 @@ In the app, never by email (`src/utils/deletionEmailService.js`):
 |------|----|----------|
 | A request is made | The account | `/account/delete` |
 | A request is made | The admins | `/admin/deletion-requests` |
+| 7 days or less before its date | The account | `/account/delete` |
 | A request is cancelled | The account | `/account/delete` |
-| A user's request is carried out | The admins | `/admin/deletion-requests` |
+| A user's request is carried out, by an admin or automatically | The admins | `/admin/deletion-requests` |
 | A deletion stops part-way | The admins | `/admin/deletion-requests` |
 
-An admin's own deletion from the Users page notifies nobody.
+An admin's own deletion from the Users page notifies nobody. No notification
+names the date itself: it is read days later and in another time zone than the
+server's, so it says how the date is set and the page shows it.
 
 ## Audit log
 
 Every action on a request is recorded in `DeletionAuditLog` with the action,
-the time, who did it (null for the public form) and, for the public form, the
-address the request came from. The Deletion Requests page shows it per request.
+the time, who did it (null for the public form and for the automatic check,
+whose entries carry `details.automatic`) and, for the public form, the address
+the request came from. The Deletion Requests page shows it per request.
 
 ## Rate limiting
 
@@ -273,8 +329,9 @@ limiter is in memory, per server process, and starts empty after a restart.
 This is the technical side of a GDPR/CCPA erasure request; it is not legal
 advice. Two things depend on the people running the instance, not on the code:
 
-- **Timeliness.** GDPR expects a request to be answered within a month. Nothing
-  here enforces that: the Deletion Requests page shows how long each request
-  has waited, and the admins get a notification when one is made.
+- **Timeliness.** GDPR expects a request to be answered within a month. A
+  request made while signed in is carried out by the server after 30 days. A
+  request from the public form is not: the Deletion Requests page shows how
+  long each has waited, and the admins get a notification when one is made.
 - **Requests by email address.** The admin decides whether a request from the
   public form is really from the account's owner.
