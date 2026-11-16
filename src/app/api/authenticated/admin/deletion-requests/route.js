@@ -14,6 +14,9 @@ import {
   sendDeletionFailureNotification
 } from '@src/utils/deletionEmailService'
 
+/** The statuses a deletion can be run from: not started, or started and stopped part-way. */
+const EXECUTABLE_STATUSES = ['pending', 'processing']
+
 /**
  * GET /api/authenticated/admin/deletion-requests
  * Get all deletion requests with filtering and pagination (admin only)
@@ -70,7 +73,11 @@ export async function GET(request) {
         ? Math.ceil((new Date(request.scheduledDeletionAt) - new Date()) / (1000 * 60 * 60 * 24))
         : null,
       canCancel: ['pending', 'pending_verification'].includes(request.status),
-      canExecute: request.status === 'pending' && new Date(request.scheduledDeletionAt) <= new Date()
+      // What POST { action: 'execute' } accepts: a request that has not
+      // started, at any time, and one whose run stopped part-way
+      canExecute: EXECUTABLE_STATUSES.includes(request.status),
+      // Whether the 30 days a user is given to change their mind have passed
+      gracePeriodOver: Boolean(request.scheduledDeletionAt) && new Date(request.scheduledDeletionAt) <= new Date()
     }))
 
     return NextResponse.json({
@@ -208,62 +215,37 @@ async function handleCancelRequest(requestId, adminId, reason) {
 }
 
 /**
- * Handle executing a deletion request
+ * Handle executing a deletion request: one that has not started, or one whose
+ * last run stopped part-way ("processing"), which this runs again.
  */
 async function handleExecuteRequest(requestId, adminId) {
-  try {
-    // The request asked for, by its id: its status and email are what the
-    // checks and the notifications below use
-    const deletionRequest = await getDeletionRequestById(requestId)
+  // The request asked for, by its id: its status, type and email are what the
+  // checks and the notifications below use
+  const deletionRequest = await getDeletionRequestById(requestId)
 
-    if (!deletionRequest) {
-      return NextResponse.json(
-        { error: 'Deletion request not found' },
-        { status: 404 }
-      )
-    }
-
-    // Validate that the request can be executed
-    if (deletionRequest.status !== 'pending') {
-      return NextResponse.json(
-        { error: 'Only pending deletion requests can be executed' },
-        { status: 400 }
-      )
-    }
-
-    // Execute the deletion
-    const result = await executeAccountDeletion(requestId, adminId)
-
-    // Send completion notification
-    await sendDeletionCompletionNotification(
-      deletionRequest.email,
-      result.deletionResults || {}
+  if (!deletionRequest) {
+    return NextResponse.json(
+      { error: 'Deletion request not found' },
+      { status: 404 }
     )
+  }
 
-    return NextResponse.json({
-      success: true,
-      message: 'Account deletion executed successfully',
-      data: {
-        requestId,
-        completedAt: new Date(),
-        completedBy: adminId,
-        deletionResults: result.deletionResults
-      }
-    })
+  // Validate that the request can be executed
+  if (!EXECUTABLE_STATUSES.includes(deletionRequest.status)) {
+    return NextResponse.json(
+      { error: 'Only pending deletion requests can be executed' },
+      { status: 400 }
+    )
+  }
 
+  // A deletion an admin started themselves tells nobody
+  const notifies = deletionRequest.requestType !== 'admin'
+
+  let result
+  try {
+    result = await executeAccountDeletion(requestId, adminId)
   } catch (error) {
     console.error('Error executing deletion request:', error)
-
-    // Get the request for failure notification
-    try {
-      const failedRequest = await getDeletionRequestById(requestId)
-
-      if (failedRequest) {
-        await sendDeletionFailureNotification(failedRequest, error)
-      }
-    } catch (notificationError) {
-      console.error('Error sending failure notification:', notificationError)
-    }
 
     if (error.message === 'Deletion request not found') {
       return NextResponse.json(
@@ -279,11 +261,51 @@ async function handleExecuteRequest(requestId, adminId) {
       )
     }
 
+    // Whether the run began: a request left "processing" has had rows removed
+    let started = false
+    try {
+      started = (await getDeletionRequestById(requestId))?.status === 'processing'
+      if (notifies) {
+        await sendDeletionFailureNotification(deletionRequest, error)
+      }
+    } catch (notificationError) {
+      console.error('Error sending failure notification:', notificationError)
+    }
+
     return NextResponse.json(
-      { error: 'Failed to execute deletion request' },
+      started
+        ? {
+            error: 'The deletion started but did not finish. Run the request again to complete it.',
+            code: 'DELETION_INCOMPLETE'
+          }
+        : { error: 'Failed to execute deletion request' },
       { status: 500 }
     )
   }
+
+  // The account is deleted. A notification that fails now is logged: it does
+  // not turn a finished deletion into an error
+  if (notifies) {
+    try {
+      await sendDeletionCompletionNotification(
+        deletionRequest.email,
+        result.deletionResults
+      )
+    } catch (notificationError) {
+      console.error('Error sending completion notification:', notificationError)
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+    message: 'Account deletion executed successfully',
+    data: {
+      requestId,
+      completedAt: new Date(),
+      completedBy: adminId,
+      deletionResults: result.deletionResults
+    }
+  })
 }
 
 /**

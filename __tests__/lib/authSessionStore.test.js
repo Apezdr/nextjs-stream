@@ -338,11 +338,17 @@ describe('our own writes drop cached sessions', () => {
     expect(offenders).toEqual([])
   })
 
-  it('bulk role writes and the account deletion go through it, the deletion only after its commit', () => {
+  it('bulk role writes and the account deletion go through it, the deletion only once its session rows are gone', () => {
     expect(read('src', 'lib', 'adminRoleReconcile.ts')).not.toMatch(/\.collection\(\)/)
     expect(read('src', 'lib', 'roles', 'limitedAccessMigration.ts')).not.toMatch(/users\.updateMany/)
-    expect(read('src', 'utils', 'accountDeletion.js')).toMatch(
-      /await session\.withTransaction\([\s\S]*?\n {4}\}\)\n[\s\S]{0,400}if \(deletedUserId\) await forgetUserSessions\(deletedUserId\)/
+    const deletion = read('src', 'utils', 'accountDeletion.js')
+    // No transaction (the databases are standalone servers, which refuse one),
+    // so there is no commit to wait for: the cached sessions are dropped after
+    // the deletes that remove the session rows from Mongo
+    // (__tests__/utils/accountDeletionExecute.test.js runs it)
+    expect(deletion).not.toMatch(/withTransaction|startSession/)
+    expect(deletion).toMatch(
+      /collection\('session'\)\.deleteMany\(\{ impersonatedBy: id \}\)[\s\S]{0,700}await forgetUserSessions\(\[userId, \.\.\.viewedAs\]\)/
     )
   })
 

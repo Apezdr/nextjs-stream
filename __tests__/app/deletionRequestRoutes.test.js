@@ -51,11 +51,22 @@ const ADA_REQUEST = '64b7f0c2a1b2c3d4e5f60001'
 const GRACE_REQUEST = '64b7f0c2a1b2c3d4e5f60002'
 
 const requests = () => mockMongo.collection('Users', 'DeletionRequests')
+const history = () => mockMongo.collection('Media', 'WatchHistory')
+const users = () => mockMongo.collection('Users', 'user')
 const statusOf = (id) => requests().docs.find((doc) => doc._id === id)?.status
 
 /** Ada asked first; Grace's request is the newest, the one the old lookup always returned. */
 function seed({ ada = 'pending', grace = 'pending' } = {}) {
   requests().docs = []
+  mockMongo.collection('Users', 'DeletionAuditLog').docs = []
+  users().docs = []
+  history().docs = []
+  for (const [hex, email] of [[ADA, 'ada@example.invalid'], [GRACE, 'grace@example.invalid']]) {
+    users().insertOne({ _id: new ObjectId(hex), email, role: 'user' })
+  }
+  history().insertOne({ userId: new ObjectId(ADA), normalizedVideoId: 'nid-1' })
+  history().insertOne({ userId: new ObjectId(ADA), normalizedVideoId: 'nid-2' })
+  history().insertOne({ userId: new ObjectId(GRACE), normalizedVideoId: 'nid-1' })
   requests().insertOne({
     _id: new ObjectId(ADA_REQUEST),
     userId: new ObjectId(ADA),
@@ -141,6 +152,66 @@ describe('an admin’s execute', () => {
       const response = await adminPost({ action: 'execute', requestId })
       expect(response.status).toBe(404)
     }
+    expect(mockEmails.sendDeletionFailureNotification).not.toHaveBeenCalled()
+  })
+
+  test('deletes that request’s account and answers with what was removed', async () => {
+    const response = await adminPost({ action: 'execute', requestId: ADA_REQUEST })
+
+    expect(response.status).toBe(200)
+    const { data } = await response.json()
+    expect(data).toMatchObject({ requestId: ADA_REQUEST, completedBy: ADMIN, deletionResults: { WatchHistory: 2, user: 1 } })
+    expect(history().docs.map((doc) => doc.userId)).toEqual([GRACE])
+    expect(statusOf(ADA_REQUEST)).toBe('completed')
+    expect(statusOf(GRACE_REQUEST)).toBe('pending')
+    expect(mockEmails.sendDeletionCompletionNotification).toHaveBeenCalledWith('ada@example.invalid', data.deletionResults)
+    expect(mockEmails.sendDeletionFailureNotification).not.toHaveBeenCalled()
+  })
+
+  test('a notification that fails after the deletion does not turn it into an error', async () => {
+    mockEmails.sendDeletionCompletionNotification.mockRejectedValue(new Error('notifications are down'))
+
+    const response = await adminPost({ action: 'execute', requestId: ADA_REQUEST })
+
+    expect(response.status).toBe(200)
+    expect(statusOf(ADA_REQUEST)).toBe('completed')
+    expect(mockEmails.sendDeletionFailureNotification).not.toHaveBeenCalled()
+  })
+
+  test('a run that stops part-way says so, and running the request again finishes it', async () => {
+    const notifications = mockMongo.collection('Media', 'Notifications')
+    const deleteMany = notifications.deleteMany
+    notifications.deleteMany = () => {
+      notifications.deleteMany = deleteMany
+      throw new Error('connection reset')
+    }
+
+    const stopped = await adminPost({ action: 'execute', requestId: ADA_REQUEST })
+
+    expect(stopped.status).toBe(500)
+    await expect(stopped.json()).resolves.toEqual({
+      error: 'The deletion started but did not finish. Run the request again to complete it.',
+      code: 'DELETION_INCOMPLETE',
+    })
+    expect(statusOf(ADA_REQUEST)).toBe('processing')
+    expect(mockEmails.sendDeletionFailureNotification).toHaveBeenCalledTimes(1)
+    expect(mockEmails.sendDeletionFailureNotification.mock.calls[0][0].email).toBe('ada@example.invalid')
+    expect(mockEmails.sendDeletionCompletionNotification).not.toHaveBeenCalled()
+
+    const again = await adminPost({ action: 'execute', requestId: ADA_REQUEST })
+
+    expect(again.status).toBe(200)
+    expect(statusOf(ADA_REQUEST)).toBe('completed')
+    expect((await again.json()).data.deletionResults).toMatchObject({ WatchHistory: 2, user: 1 })
+  })
+
+  test('a deletion an admin started themselves notifies nobody, done or not', async () => {
+    requests().docs.find((doc) => doc._id === ADA_REQUEST).requestType = 'admin'
+
+    const response = await adminPost({ action: 'execute', requestId: ADA_REQUEST })
+
+    expect(response.status).toBe(200)
+    expect(mockEmails.sendDeletionCompletionNotification).not.toHaveBeenCalled()
     expect(mockEmails.sendDeletionFailureNotification).not.toHaveBeenCalled()
   })
 

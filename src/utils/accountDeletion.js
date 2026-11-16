@@ -4,6 +4,9 @@ import { randomBytes } from 'node:crypto'
 import { userQueries } from '@src/lib/userQueries'
 import { forgetUserSessions } from '@src/lib/authSessionStore'
 import { deletePlaybackForUser } from '@src/utils/watchHistory/database'
+import { createLogger } from '@src/lib/logger'
+
+const log = createLogger('AccountDeletion')
 
 /**
  * Account deletion utility functions
@@ -385,160 +388,368 @@ export async function cancelDeletionRequest(deletionRequestId, performedBy, reas
   return deletionRequest
 }
 
-/**
- * Execute account deletion
- * @param {string} deletionRequestId - Deletion request ID
- * @param {string} performedBy - Admin user ID performing the deletion
- * @returns {Promise<Object>} Deletion result
- */
-export async function executeAccountDeletion(deletionRequestId, performedBy) {
-  const client = await clientPromise
-  const session = client.startSession()
-  // Whose cached sessions to drop once the deletion commits (see below)
-  let deletedUserId = null
+/** Where better-auth keeps user, session, account and deviceCode. */
+const authDb = (client) => client.db(process.env.MONGODB_AUTH_DB || 'Users')
 
-  try {
-    await session.withTransaction(async () => {
-      const usersDb = client.db('Users')
-      const mediaDb = client.db('Media')
-      
-      // Get deletion request
-      const deletionRequest = await usersDb.collection('DeletionRequests').findOne(
-        { _id: new ObjectId(deletionRequestId) },
-        { session }
-      )
-      
-      if (!deletionRequest) {
-        throw new Error('Deletion request not found')
-      }
-      
-      if (deletionRequest.status !== 'pending') {
-        throw new Error('Deletion request is not in pending status')
-      }
-      
-      const userId = deletionRequest.userId
-      const userEmail = deletionRequest.email
-      deletedUserId = userId
-      
-      // Delete user data across all collections
-      const deletionResults = await deleteUserDataAcrossCollections(userId, userEmail, session)
-      
-      // Update deletion request status
-      await usersDb.collection('DeletionRequests').updateOne(
-        { _id: new ObjectId(deletionRequestId) },
-        { 
-          $set: { 
-            status: 'completed',
-            completedAt: new Date(),
-            completedBy: performedBy,
-            deletionResults,
-            updatedAt: new Date()
-          } 
-        },
-        { session }
-      )
-      
-      // Create audit log entry
-      await createDeletionAuditLog({
-        deletionRequestId: new ObjectId(deletionRequestId),
-        action: 'deletion_completed',
-        performedBy,
-        details: { deletionResults }
-      }, session)
-      
-    return { success: true, deletionResults }
-    })
-    // After the commit, not inside the transaction: a request racing the
-    // deletion could otherwise cache the not-yet-deleted session again, and
-    // the deleted account would stay signed in until that entry expired
-    if (deletedUserId) await forgetUserSessions(deletedUserId)
-  } finally {
-    await session.endSession()
+/** A request a deletion can run from: not started, or started and not finished. */
+const RUNNABLE_STATUSES = ['pending', 'processing']
+
+/** A request that has not started: it can still be cancelled. */
+const OPEN_STATUSES = ['pending', 'pending_verification']
+
+/** Why better-auth refuses a session to an account whose deletion has started. */
+export const DELETION_BAN_REASON = 'Account deletion in progress'
+
+const SUPERSEDED_REASON = 'The account was deleted by another request'
+
+/**
+ * The user a deletion acts on, as an ObjectId. Throws when the id is missing
+ * or malformed: every filter a deletion runs is built from it, and a filter on
+ * an undefined id matches the rows that have no user at all.
+ */
+function requireUserId(value) {
+  const userId = toObjectIdOrNull(value)
+  if (!userId) throw new Error('Account deletion needs a valid user id')
+  return userId
+}
+
+// Each step is handed { client, userId, requestId, performedBy, removed, note }.
+// `removed(name, count)` adds to the request's count for a collection as soon
+// as its delete has finished, so a step that stops part-way has still counted
+// what it removed; `note(name, value)` sets a result that is not a count.
+
+/**
+ * Step 1. The account stops acting before any of its data goes. It is banned,
+ * so better-auth refuses it a new session (its admin plugin checks the flag
+ * whenever a session is created: sign-in, a device code, "View as"), then
+ * signed out everywhere. A deletion that stops after this leaves an account
+ * that cannot sign in, with all its data, until the request is run again.
+ *
+ * session.userId is an ObjectId (it references user.id); a session's
+ * impersonatedBy and a device code's userId are text.
+ */
+async function signOut({ client, userId, removed }) {
+  const auth = authDb(client)
+  const id = userId.toHexString()
+
+  await userQueries.updateById(userId, { banned: true, banReason: DELETION_BAN_REASON, banExpires: null })
+
+  // "View as" sessions this account opened as other users end with it
+  const viewedAs = await auth.collection('session').distinct('userId', { impersonatedBy: id })
+  await removed('session', (await auth.collection('session').deleteMany({ userId })).deletedCount)
+  await removed('session', (await auth.collection('session').deleteMany({ impersonatedBy: id })).deletedCount)
+  // A device code this account approved would hand a TV a session for it
+  await removed('deviceCode', (await auth.collection('deviceCode').deleteMany({ userId: { $in: [id, userId] } })).deletedCount)
+
+  // Only now that the rows are gone from Mongo: dropped any sooner, a request
+  // racing the deletion could read the session from Mongo and cache it again
+  await forgetUserSessions([userId, ...viewedAs])
+}
+
+/** Step 2. What the account watched, and what the app kept about it. */
+async function deleteActivity({ client, userId, removed }) {
+  const media = client.db('Media')
+
+  await removed('WatchHistory', (await deletePlaybackForUser(userId)).deletedCount)
+  // PlaybackStatus is what WatchHistory was migrated from: its rows would bring the history back
+  for (const name of ['PlaybackStatus', 'PlaybackPresence', 'Notifications', 'ClientErrorReports']) {
+    await removed(name, (await media.collection(name).deleteMany({ userId })).deletedCount)
+  }
+}
+
+/** A list other people can open or change: it stays when its owner's account goes. */
+const isSharedPlaylist = (playlist) =>
+  playlist.privacy !== 'private' ||
+  (Array.isArray(playlist.collaborators) && playlist.collaborators.length > 0) ||
+  Boolean(playlist.globalPermission)
+
+/**
+ * Step 3. The account's lists. Its private lists go, with everything in them.
+ * A list it owns that other people can open or change stays as it is, without
+ * an owner, and is named in the results (keptSharedPlaylists): other people
+ * use it, so removing it is not this deletion's call. On other people's lists
+ * the account stops being a collaborator, and the titles it added stay: a
+ * title belongs to its list, not to whoever added it.
+ */
+async function deleteLists({ client, userId, removed, note }) {
+  const media = client.db('Media')
+  const playlists = media.collection('Playlists')
+  const watchlist = media.collection('Watchlist')
+
+  const owned = await playlists
+    .find({ ownerId: userId }, { projection: { _id: 1, privacy: 1, collaborators: 1, globalPermission: 1 } })
+    .toArray()
+  const own = owned.filter((playlist) => !isSharedPlaylist(playlist)).map((playlist) => playlist._id)
+  await note('keptSharedPlaylists', owned.filter(isSharedPlaylist).map((playlist) => String(playlist._id)))
+
+  if (own.length > 0) {
+    // The items before their lists: a stop between the two leaves lists a second run still finds
+    await removed('Watchlist', (await watchlist.deleteMany({ playlistId: { $in: own } })).deletedCount)
+    await removed('Playlists', (await playlists.deleteMany({ _id: { $in: own }, ownerId: userId })).deletedCount)
+  }
+
+  // What it added that is in no list at all (the list has since gone)
+  const listed = await watchlist.distinct('playlistId', { userId })
+  const existing = await playlists.find({ _id: { $in: listed } }, { projection: { _id: 1 } }).toArray()
+  await removed(
+    'Watchlist',
+    (await watchlist.deleteMany({ userId, playlistId: { $nin: existing.map((playlist) => playlist._id) } })).deletedCount
+  )
+
+  const collaborations = await playlists.updateMany(
+    { collaborators: { $elemMatch: { userId } } },
+    { $pull: { collaborators: { userId } } }
+  )
+  await removed('playlistCollaborations', collaborations.modifiedCount)
+
+  await removed(
+    'PlaylistVisibility',
+    (await client.db('Users').collection('PlaylistVisibility').deleteMany({ userId })).deletedCount
+  )
+}
+
+/**
+ * The same person's rows under the names the sign-in system used before
+ * better-auth (NextAuth), in a database that still has them: the old user and
+ * OAuth account rows, the copies taken when they were migrated, and the QR
+ * sign-in's tokens.
+ */
+const LEGACY_SIGN_IN = [
+  ['AuthenticatedUsers', (userId) => ({ _id: userId })],
+  ['AuthenticatedUsers_backup', (userId) => ({ _id: userId })],
+  ['SSOAccounts', (userId) => ({ userId })],
+  ['SSOAccounts_backup', (userId) => ({ userId })],
+  ['authSessions', (userId) => ({ 'tokens.user.id': userId.toHexString() })],
+  ['usedTokens', (userId) => ({ userId: userId.toHexString() })],
+]
+
+/** Step 4. */
+async function deleteLegacySignIn({ client, userId, removed }) {
+  const users = client.db('Users')
+  for (const [name, filterFor] of LEGACY_SIGN_IN) {
+    await removed(name, (await users.collection(name).deleteMany(filterFor(userId))).deletedCount)
   }
 }
 
 /**
- * Delete user data across all collections
- * @param {ObjectId} userId - User ID
- * @param {string} userEmail - User email
- * @param {Object} session - MongoDB session for transaction
- * @returns {Promise<Object>} Deletion results
+ * Step 5. The account's other deletion requests end here (this one deletes it),
+ * and the email-verification tokens of all its requests go.
  */
-async function deleteUserDataAcrossCollections(userId, userEmail, session) {
+async function closeOtherRequests({ client, userId, requestId, performedBy, removed }) {
+  const users = client.db('Users')
+  const requests = users.collection('DeletionRequests')
+
+  const mine = await requests.find({ userId }, { projection: { _id: 1 } }).toArray()
+  const tokens = await users
+    .collection('DeletionVerificationTokens')
+    .deleteMany({ deletionRequestId: { $in: mine.map((request) => request._id) } })
+  await removed('DeletionVerificationTokens', tokens.deletedCount)
+
+  const now = new Date()
+  const superseded = await requests.updateMany(
+    { userId, _id: { $ne: requestId }, status: { $in: [...OPEN_STATUSES, 'processing'] } },
+    {
+      $set: {
+        status: 'cancelled',
+        cancelledAt: now,
+        cancelledBy: performedBy,
+        cancellationReason: SUPERSEDED_REASON,
+        supersededBy: requestId,
+        updatedAt: now,
+      },
+    }
+  )
+  await removed('supersededRequests', superseded.modifiedCount)
+}
+
+/**
+ * Step 6, the last. The OAuth links, then the user. An account row left behind
+ * would lock the person out for good: better-auth finds it at their next
+ * sign-in, finds no user behind it, and refuses ("unable to link account")
+ * rather than make a new one. The user row goes last of all, so that until
+ * every other step has run the account is still listed on the Users page.
+ */
+async function deleteSignIn({ client, userId, removed }) {
+  const auth = authDb(client)
+
+  await removed('account', (await auth.collection('account').deleteMany({ userId })).deletedCount)
+  // A session that was being created as step 1 ran
+  await removed('session', (await auth.collection('session').deleteMany({ userId })).deletedCount)
+  // Deletes the user, then drops its cached sessions
+  await removed('user', (await userQueries.deleteById(userId)).deletedCount)
+}
+
+/**
+ * A deletion's steps, in the order they run. The databases here are
+ * standalone servers, which refuse transactions, so nothing spans the steps:
+ * each is safe to run again, a run does all of them, and the request is
+ * marked completed only after the last one. What a stop in each step leaves:
+ *
+ * - signOut:      the account banned, and signed out or not; all its data intact
+ * - activity:     banned and signed out; some of its history and notifications gone
+ * - lists:        as above, and some of its private lists and home rows gone
+ * - legacySignIn: as above, and some of its pre-better-auth rows gone
+ * - requests:     as above; other requests of the account may still be open
+ * - account:      as above, and its OAuth links gone; the user row may remain
+ *
+ * In every case the request says "processing", names the step and the error
+ * (lastError), counts what has been removed so far (deletionResults), and can
+ * be run again.
+ */
+const DELETION_STEPS = [
+  ['signOut', signOut],
+  ['activity', deleteActivity],
+  ['lists', deleteLists],
+  ['legacySignIn', deleteLegacySignIn],
+  ['requests', closeOtherRequests],
+  ['account', deleteSignIn],
+]
+
+/** What a run writes on its request as it goes. */
+function progressOn(requests, requestId) {
+  const write = (update) => requests.updateOne({ _id: requestId }, update)
+  return {
+    /** Adds to a collection's count: what earlier runs removed stays counted. */
+    removed: (name, count) => write({ $inc: { [`deletionResults.${name}`]: count }, $set: { updatedAt: new Date() } }),
+    note: (name, value) => write({ $set: { [`deletionResults.${name}`]: value, updatedAt: new Date() } }),
+    /** A step of this run that ran to its end. */
+    finished: (step) => {
+      const now = new Date()
+      return write({ $set: { [`progress.${step}`]: now, updatedAt: now } })
+    },
+  }
+}
+
+/** The step a run stopped at, on the request and in the audit log. Never throws: the step's own error is what the caller hears. */
+async function recordFailure(requests, requestId, performedBy, step, error) {
+  const message = error?.message || String(error)
+  log.error({ requestId: String(requestId), step, error: message }, 'Account deletion stopped part-way; run the request again')
+  try {
+    const now = new Date()
+    await requests.updateOne({ _id: requestId }, { $set: { lastError: { step, message, at: now }, updatedAt: now } })
+    await createDeletionAuditLog({
+      deletionRequestId: requestId,
+      action: 'deletion_failed',
+      performedBy,
+      details: { step, error: message },
+    })
+  } catch (recordError) {
+    log.error({ requestId: String(requestId), step, error: recordError?.message }, 'Could not record where the account deletion stopped')
+  }
+}
+
+/**
+ * Execute account deletion: every step, in order, without a transaction (see
+ * DELETION_STEPS). The request moves to "processing" before the first step and
+ * to "completed" only after the last. A request left in "processing" by a run
+ * that stopped is run again with the same call, and finishes the job.
+ *
+ * @param {string|ObjectId} deletionRequestId - Deletion request ID
+ * @param {string|ObjectId} performedBy - Admin user ID performing the deletion
+ * @returns {Promise<{ success: true, deletionResults: Object }>} What was removed, over every run of the request
+ */
+export async function executeAccountDeletion(deletionRequestId, performedBy) {
+  const requestId = toObjectIdOrNull(deletionRequestId)
+  if (!requestId) {
+    throw new Error('Deletion request not found')
+  }
+  // Who ran it goes in the audit log: refused here rather than half-way
+  if (!toObjectIdOrNull(performedBy)) {
+    throw new Error('Account deletion needs the id of the admin running it')
+  }
+
   const client = await clientPromise
-  const usersDb = client.db('Users')
-  const mediaDb = client.db('Media')
-  
-  const results = {}
-  
-  // Delete from user collection
-  // Note: Using collection() directly because we need session support. The
-  // caller drops the user's cached sessions after the transaction commits
-  const userResult = await userQueries.collection().deleteOne(
-    { _id: userQueries.toUserId(userId) },
-    { session }
+  const requests = client.db('Users').collection('DeletionRequests')
+
+  const deletionRequest = await requests.findOne({ _id: requestId })
+  if (!deletionRequest) {
+    throw new Error('Deletion request not found')
+  }
+  if (!RUNNABLE_STATUSES.includes(deletionRequest.status)) {
+    throw new Error('Deletion request is not in pending status')
+  }
+
+  // Before anything is written or removed
+  const userId = requireUserId(deletionRequest.userId)
+  const resumed = deletionRequest.status === 'processing'
+
+  const startedAt = new Date()
+  const started = await requests.updateOne(
+    { _id: requestId, status: { $in: RUNNABLE_STATUSES } },
+    {
+      $set: {
+        status: 'processing',
+        startedAt: deletionRequest.startedAt ?? startedAt,
+        lastRunAt: startedAt,
+        lastRunBy: performedBy,
+        // This run's steps; deletionResults keeps counting across runs
+        progress: {},
+        updatedAt: startedAt,
+      },
+      $unset: { lastError: '' },
+    }
   )
-  results.user = userResult.deletedCount
-  
-  // Delete from SSOAccounts
-  const ssoResult = await usersDb.collection('SSOAccounts').deleteMany(
-    { userId },
-    { session }
+  if (started.matchedCount !== 1) {
+    // Cancelled or completed since it was read
+    throw new Error('Deletion request is not in pending status')
+  }
+
+  // 'start' is the audit entry: nothing is removed before it is written
+  let step = 'start'
+  try {
+    await createDeletionAuditLog({
+      deletionRequestId: requestId,
+      action: resumed ? 'deletion_resumed' : 'deletion_started',
+      performedBy,
+      details: { userId: userId.toHexString() },
+    })
+    const { removed, note, finished } = progressOn(requests, requestId)
+    for (const [name, run] of DELETION_STEPS) {
+      step = name
+      await run({ client, userId, requestId, performedBy, removed, note })
+      await finished(step)
+    }
+  } catch (error) {
+    await recordFailure(requests, requestId, performedBy, step, error)
+    throw error
+  }
+
+  // Every step ran
+  const completedAt = new Date()
+  const completed = await requests.updateOne(
+    { _id: requestId, status: 'processing' },
+    { $set: { status: 'completed', completedAt, completedBy: performedBy, updatedAt: completedAt } }
   )
-  results.SSOAccounts = ssoResult.deletedCount
-  
-  // Delete from session
-  const sessionResult = await usersDb.collection('session').deleteMany(
-    { userId },
-    { session }
-  )
-  results.session = sessionResult.deletedCount
-  
-  // Delete from authSessions
-  const authSessionResult = await usersDb.collection('authSessions').deleteMany(
-    { 'tokens.user.id': userId.toString() },
-    { session }
-  )
-  results.authSessions = authSessionResult.deletedCount
-  
-  // Delete from usedTokens (if any are tied to this user)
-  const usedTokensResult = await usersDb.collection('usedTokens').deleteMany(
-    { userId: userId.toString() },
-    { session }
-  )
-  results.usedTokens = usedTokensResult.deletedCount
-  
-  // Delete user activity data from Media database using centralized function
-  const watchHistoryResult = await deletePlaybackForUser(userId, session)
-  results.WatchHistory = watchHistoryResult.deletedCount
-  
-  // Delete notifications
-  const notificationsResult = await mediaDb.collection('Notifications').deleteMany(
-    { userId },
-    { session }
-  )
-  results.Notifications = notificationsResult.deletedCount
-  
-  // Delete any user-specific preferences or settings
-  const preferencesResult = await mediaDb.collection('UserPreferences').deleteMany(
-    { userId },
-    { session }
-  )
-  results.UserPreferences = preferencesResult.deletedCount || 0
-  
-  return results
+  // What every run of the request removed, as the steps counted it
+  const record = await requests.findOne({ _id: requestId })
+  const deletionResults = record?.deletionResults ?? {}
+
+  if (completed.modifiedCount === 1) {
+    try {
+      await createDeletionAuditLog({
+        deletionRequestId: requestId,
+        action: 'deletion_completed',
+        performedBy,
+        details: { deletionResults },
+      })
+    } catch (auditError) {
+      // The account is gone and the request says so; a lost log line is not a failed deletion
+      log.error({ requestId: String(requestId), error: auditError?.message }, 'Account deleted, but the audit log entry could not be written')
+    }
+  }
+
+  return { success: true, deletionResults }
 }
 
 /**
  * Create an audit log entry for deletion actions
  * @param {Object} logData - Audit log data
- * @param {Object} session - Optional MongoDB session
  * @returns {Promise<Object>} Created audit log entry
  */
-export async function createDeletionAuditLog(logData, session = null) {
+export async function createDeletionAuditLog(logData) {
   const client = await clientPromise
   const db = client.db('Users')
-  
+
   const auditLog = {
     _id: new ObjectId(),
     deletionRequestId: logData.deletionRequestId,
@@ -549,10 +760,9 @@ export async function createDeletionAuditLog(logData, session = null) {
     ipAddress: logData.ipAddress || null,
     userAgent: logData.userAgent || null
   }
-  
-  const options = session ? { session } : {}
-  await db.collection('DeletionAuditLog').insertOne(auditLog, options)
-  
+
+  await db.collection('DeletionAuditLog').insertOne(auditLog)
+
   return auditLog
 }
 

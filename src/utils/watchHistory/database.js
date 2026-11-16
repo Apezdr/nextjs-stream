@@ -586,11 +586,16 @@ export async function getViewCount(normalizedVideoId) {
  */
 export async function deletePlaybackForUser(userId, session = null) {
   try {
+    const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
+    // Refused before the delete: a filter on a missing id matches the rows
+    // that have no user, not the rows of nobody
+    if (!(userIdObj instanceof ObjectId)) {
+      throw new Error('deletePlaybackForUser needs a user id')
+    }
+
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('WatchHistory')
-
-    const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
 
     const options = session ? { session } : {}
     const result = await collection.deleteMany({ userId: userIdObj }, options)
