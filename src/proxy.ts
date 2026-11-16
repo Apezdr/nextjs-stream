@@ -38,7 +38,6 @@ const SELF_CACHED_API_PREFIXES = [
   '/api/authenticated/notifications',
   '/api/authenticated/banner',
   '/api/authenticated/horizontal-list',
-  '/api/authenticated/sync/pullPlayback',
   '/api/authenticated/sync/positions',
   '/api/authenticated/watchlist',
 ]

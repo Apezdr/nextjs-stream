@@ -5,7 +5,6 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence';
-import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched';
 import { fetchSeasonHasEpisodes } from '@components/MediaPages/mediaListApi';
 
 const variants = {
@@ -57,7 +56,6 @@ export default function NoEpisodesFound({ showTitle, seasonNumber, season = {} }
   
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-transparent transition-opacity duration-300">
-      <SyncClientWithServerWatched />
       <div className="h-auto flex items-center justify-center py-32 lg:py-0 px-4 xl:px-0 sm:mt-20">
         <ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-4 gap-y-8 sm:gap-x-6 xl:gap-x-8">
           {/* Summary Poster - Left Column */}

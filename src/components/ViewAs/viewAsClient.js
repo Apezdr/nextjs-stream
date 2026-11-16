@@ -8,8 +8,11 @@
 // Both end in a full-page navigation, never a router push. Everything the
 // client router holds was rendered for the previous user: the cached
 // segments, the nav chrome the browser may reuse for 30 s
-// (getChromeSession), the root layout with the banner (or without it). A new
-// document is rendered for the new session from scratch.
+// (getChromeSession), the root layout with the banner (or without it), and
+// the positions the page holds in memory for its progress bars
+// (WatchProgress/playbackStore.js). A new document is rendered for the new
+// session from scratch, and nothing of the last user's is kept in the
+// browser's storage to clear.
 //
 // This browser's other tabs are told too, and reload: their pages were
 // rendered for whoever was signed in before, and a tab that went on showing
@@ -23,7 +26,6 @@
 // the admin's own history, and a receiver started with writes on goes on
 // reporting to the user with its own token after writes go off.
 import { authClient } from '@src/lib/auth-client'
-import { clearPlaybackMirror } from '@components/SyncClientWithServerWatched'
 import { endCastSession, getContext } from '@components/Cast/castSdk'
 
 /** Where "View as" lands: the library home, as the user sees it. */
@@ -83,8 +85,6 @@ function tellOtherTabs() {
 }
 
 function switched(href) {
-  // The last user's positions would stay behind as this browser's resume points
-  clearPlaybackMirror()
   tellOtherTabs()
   navigateFully(href)
 }

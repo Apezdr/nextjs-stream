@@ -24,7 +24,6 @@ import {
   blurDataURL,
 } from '@src/utils/media/tvFacts'
 import { tvSeasonPosterName, tvEpisodePosterName } from '@src/utils/viewTransitionNames'
-import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import WatchingNowLine from '@components/WatchingNow/WatchingNowLine'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import NoEpisodesFound from './NoEpisodesFound'
@@ -122,7 +121,6 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
 
   return (
     <div className="media-details-page relative mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6 lg:px-8">
-      <SyncClientWithServerWatched />
       <div className="flex min-w-0 items-center justify-between gap-4 pt-4">
         <Trail items={[{ label: 'TV', href: '/list/tv' }, { label: showDisplay, href: hrefs.show }, { label: seasonLabel(n) }]} />
         <AdminEditButton variant="subtle" label="Edit season" href={showId ? `/admin/media/tv/${showId}?season=${n}` : null} />

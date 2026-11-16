@@ -9,7 +9,6 @@ import { Suspense } from 'react'
 import MediaPlayerComponent from '@src/components/MediaPlayer/MediaPlayer'
 import EpisodeListComponent from '@src/components/MediaPlayer/EpisodeListComponent'
 import { PlaybackCoordinatorProvider } from '@src/contexts/PlaybackCoordinatorContext'
-import SyncClientWithServerWatched from '@src/components/SyncClientWithServerWatched'
 import Loading from '@src/app/loading'
 import { validateVideoURL } from '@src/utils/media/mediaFetcher'
 import { buildMediaUrl } from '@src/utils/media/urlParser'
@@ -39,16 +38,16 @@ export default async function TVEpisodePlayerView({ media, session, searchParams
     includePlay: false,
   })
   
-  // Fetch saved playback position server-side (prevents flash on load).
-  // The whole media item goes in, not just the URL: the durable mediaId arm
-  // is what finds the row after a quality swap, and duration is what turns a
-  // finished episode into "start over".
+  // The saved position as of this render. The player asks the server again as
+  // it mounts and starts from this only when no answer comes in time
+  // (resumePosition.js). The whole media item goes in, not just the URL: the
+  // durable mediaId arm is what finds the row after a quality swap, and
+  // duration is what turns a finished episode into "start over".
   const savedPlaybackTime = media?.videoURL ? await getResumePositionForMedia(media, session.user.id) : 0
   return (
     <PlaybackCoordinatorProvider>
       <>
         <div className="flex flex-col items-center justify-center min-h-dvh">
-          <SyncClientWithServerWatched once={true} />
           <Suspense fallback={<Loading />}>
             <MediaPlayerComponent
               media={media}

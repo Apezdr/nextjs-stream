@@ -4,7 +4,7 @@
  * Library scopes on the reads that answer one viewer, over an in-memory Media
  * database: a title page's lookup (getFlatRequestedMedia: a title outside the
  * scope is not found, like a missing one, and a show's seasons and episodes
- * follow it), the user's own watch rows (pullPlayback), and the new-content
+ * follow it), the user's own watch rows (the positions snapshot, one title's position), and the new-content
  * notices (delivered, and read, only when every title they name is in scope).
  */
 

@@ -25,7 +25,6 @@ import {
   nextUpNoun,
   showFacts,
 } from '@src/utils/media/tvFacts'
-import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import WatchingNowLine from '@components/WatchingNow/WatchingNowLine'
 import WatchlistButton from '@components/WatchlistButton'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
@@ -124,7 +123,6 @@ export default async function TVShowSeasonsList({ showTitle, show = null, userId
 
   return (
     <div className="media-details-page relative mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6 lg:px-8">
-      <SyncClientWithServerWatched />
       <div className="flex min-w-0 items-center justify-between gap-4 pt-4">
         <Trail items={[{ label: 'TV', href: '/list/tv' }, { label: display }]} />
         <AdminEditButton variant="subtle" label="Edit show" href={doc._id ? `/admin/media/tv/${doc._id}` : null} />

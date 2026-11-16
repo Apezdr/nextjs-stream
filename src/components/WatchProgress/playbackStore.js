@@ -92,9 +92,9 @@ function randomId() {
 /**
  * The signed-in user's positions, in memory, for every progress surface of
  * the page: rail cards, hover popups, grid posters, episode rows, the details
- * pages' button, panel and bar. It replaces the copy the browser kept in
- * localStorage, which named titles and no user, outlived the session, and was
- * compared by the browser's clock.
+ * pages' button, panel and bar. It replaces the copy the browser used to keep
+ * in its own storage, which named titles and no user, outlived the session,
+ * and was compared by the browser's clock.
  *
  * - **For display only.** The record is the server's row. Nothing here is a
  *   place to resume from (the player asks the server), and nothing is written

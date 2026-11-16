@@ -14,7 +14,6 @@ jest.mock('next/image', () => ({
 const mockRefresh = jest.fn()
 jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mockRefresh }) }))
 jest.mock('@components/HOC/PageContentAnimatePresence', () => ({ __esModule: true, default: ({ children }) => children }))
-jest.mock('@components/SyncClientWithServerWatched', () => ({ __esModule: true, default: () => null }))
 const mockAsk = jest.fn()
 jest.mock('@components/MediaPages/mediaListApi', () => ({ fetchSeasonHasEpisodes: (...args) => mockAsk(...args) }))
 

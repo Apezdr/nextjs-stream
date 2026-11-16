@@ -1,7 +1,6 @@
 import { Suspense } from 'react'
 import dynamic from 'next/dynamic'
 import { cacheLife } from 'next/cache'
-import SyncClientWithServerWatched from './SyncClientWithServerWatched'
 import HorizontalScrollContainer from '@src/components/MediaScroll/HorizontalScrollContainer'
 import RecommendationSectionTitle from './RecommendationSectionTitle'
 import AsyncMediaCounts from './AsyncMediaCounts'
@@ -148,9 +147,6 @@ export default async function LandingPage({
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:py-24 bg-[#060916e8]">
-      <Suspense>
-        <SyncClientWithServerWatched />
-      </Suspense>
       <WelcomeSection userName={name} scopeId={access.id} />
       
       {/* Wrap scrollable content with popup context provider */}

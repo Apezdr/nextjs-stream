@@ -3,9 +3,13 @@
  *
  * Starting and stopping "View as" in the browser: better-auth's admin client
  * swaps the session, then a full-page navigation (never a router push) loads
- * a new document for it, the last user's mirrored positions are dropped, and
- * this browser's other tabs are told so they reload. A cast in progress ends
- * at every switch, before the session changes.
+ * a new document for it, and this browser's other tabs are told so they
+ * reload. A cast in progress ends at every switch, before the session
+ * changes.
+ *
+ * The last user's positions need no clearing: the page holds them in memory
+ * only (WatchProgress/playbackStore.js), and they go with the document. The
+ * browser's storage is not touched.
  */
 const mockImpersonate = jest.fn()
 const mockStop = jest.fn()
@@ -45,16 +49,10 @@ const anotherTabSwitches = () => listeners.forEach((listener) => listener({ data
 const assign = jest.fn()
 const reload = jest.fn()
 global.window = { location: { assign, reload } }
-const stored = new Map()
-global.localStorage = {
-  get length() {
-    return stored.size
-  },
-  key: (i) => [...stored.keys()][i] ?? null,
-  getItem: (key) => stored.get(key) ?? null,
-  setItem: (key, value) => stored.set(key, String(value)),
-  removeItem: (key) => stored.delete(key),
-}
+// Any use of the browser's storage is counted: there is to be none
+const storage = { key: jest.fn(() => null), getItem: jest.fn(() => null), setItem: jest.fn(), removeItem: jest.fn(), clear: jest.fn() }
+global.localStorage = { length: 3, ...storage }
+const storageCalls = () => Object.values(storage).reduce((calls, fn) => calls + fn.mock.calls.length, 0)
 
 const {
   startViewAs,
@@ -69,17 +67,12 @@ beforeEach(() => {
   jest.clearAllMocks()
   mockCurrentSession = null
   posted.length = 0
-  stored.clear()
-  stored.set('mid:movie:1', '{"playbackTime":12}')
-  stored.set('https://files.example.com/movies/x/x.mp4', '{"playbackTime":34}')
-  stored.set('theme', 'dark')
 })
 
-it('start: swaps the session, drops the mirrored positions, tells the other tabs, loads the library', async () => {
+it('start: swaps the session, tells the other tabs, loads the library as a new document', async () => {
   mockImpersonate.mockResolvedValue({ data: { session: {} }, error: null })
   expect(await startViewAs('u1')).toEqual({ ok: true })
   expect(mockImpersonate).toHaveBeenCalledWith({ userId: 'u1' })
-  expect([...stored.keys()]).toEqual(['theme'])
   expect(posted).toEqual([['nextjs-stream.view-as', 'switched']])
   expect(assign).toHaveBeenCalledWith('/list')
 })
@@ -87,9 +80,24 @@ it('start: swaps the session, drops the mirrored positions, tells the other tabs
 it('stop: back to the Users page as the admin, the same way', async () => {
   mockStop.mockResolvedValue({ data: {}, error: null })
   expect(await stopViewAs()).toEqual({ ok: true })
-  expect([...stored.keys()]).toEqual(['theme'])
   expect(posted).toHaveLength(1)
   expect(assign).toHaveBeenCalledWith('/admin/users')
+})
+
+it('no switch touches the browser’s storage: the positions were in the page’s memory, and go with the document', async () => {
+  mockImpersonate.mockResolvedValue({ data: { session: {} }, error: null })
+  mockStop.mockResolvedValue({ data: {}, error: null })
+  mockSignOut.mockResolvedValue({ data: { success: true }, error: null })
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ viewAsWrites: true }) })
+
+  await startViewAs('u1')
+  await stopViewAs()
+  await setViewAsWrites(true)
+  await signOutOfViewAs()
+
+  expect(storageCalls()).toBe(0)
+  // Each one left by a full load, which is what empties the page's memory
+  expect(assign.mock.calls.length + reload.mock.calls.length).toBe(4)
 })
 
 it('a refused or failed call changes nothing and says why', async () => {
@@ -99,7 +107,6 @@ it('a refused or failed call changes nothing and says why', async () => {
   expect(await stopViewAs()).toEqual({ ok: false, error: 'Failed to fetch', status: null })
   expect(assign).not.toHaveBeenCalled()
   expect(posted).toHaveLength(0)
-  expect(stored.size).toBe(3)
 })
 
 it('another tab’s start or stop reloads this one, until it unsubscribes', () => {
@@ -116,7 +123,7 @@ describe('the writes switch', () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ viewAsWrites: true }) })
   })
 
-  it('asks the server, then reloads this tab and tells the others; the positions stay (same user)', async () => {
+  it('asks the server, then reloads this tab and tells the others', async () => {
     expect(await setViewAsWrites(true)).toEqual({ ok: true })
     const [url, init] = global.fetch.mock.calls[0]
     expect(url).toBe('/api/authenticated/view-as/writes')
@@ -125,7 +132,6 @@ describe('the writes switch', () => {
     expect(JSON.parse(init.body)).toEqual({ enabled: true })
     expect(reload).toHaveBeenCalledTimes(1)
     expect(posted).toEqual([['nextjs-stream.view-as', 'switched']])
-    expect(stored.size).toBe(3)
     expect(assign).not.toHaveBeenCalled()
   })
 

@@ -8,7 +8,6 @@
 import { Suspense } from 'react'
 import MediaPlayerComponent from '@src/components/MediaPlayer/MediaPlayer'
 import { PlaybackCoordinatorProvider } from '@src/contexts/PlaybackCoordinatorContext'
-import SyncClientWithServerWatched from '@src/components/SyncClientWithServerWatched'
 import Loading from '@src/app/loading'
 import { validateVideoURL } from '@src/utils/media/mediaFetcher'
 import { buildGoBackUrl } from '@src/utils/media/urlParser'
@@ -30,31 +29,29 @@ export default async function MoviePlayerView({ media, session, searchParams, pa
   // Build go back URL
   const goBackUrl = buildGoBackUrl(parsedParams)
   
-  // Fetch saved playback position server-side (prevents flash on load).
-  // The whole media item goes in, not just the URL: the durable mediaId arm
-  // is what finds the row after a quality swap, and duration is what turns a
-  // finished title into "start over".
+  // The saved position as of this render. The player asks the server again as
+  // it mounts and starts from this only when no answer comes in time
+  // (resumePosition.js). The whole media item goes in, not just the URL: the
+  // durable mediaId arm is what finds the row after a quality swap, and
+  // duration is what turns a finished title into "start over".
   const savedPlaybackTime = media?.videoURL ? await getResumePositionForMedia(media, session.user.id) : 0
   
   return (
-    <>
-      <SyncClientWithServerWatched once={true} />
-      <Suspense fallback={<Loading />}>
-        <PlaybackCoordinatorProvider>
-          <div className="flex flex-col items-center justify-center min-h-dvh">
-            <MediaPlayerComponent
-              media={media}
-              mediaTitle={parsedParams.mediaTitle}
-              mediaType={parsedParams.mediaType}
-              goBack={goBackUrl}
-              searchParams={searchParams}
-              session={session}
-              isValidVideoURL={isValidVideoURL}
-              savedPlaybackTime={savedPlaybackTime}
-            />
-          </div>
-        </PlaybackCoordinatorProvider>
-      </Suspense>
-    </>
+    <Suspense fallback={<Loading />}>
+      <PlaybackCoordinatorProvider>
+        <div className="flex flex-col items-center justify-center min-h-dvh">
+          <MediaPlayerComponent
+            media={media}
+            mediaTitle={parsedParams.mediaTitle}
+            mediaType={parsedParams.mediaType}
+            goBack={goBackUrl}
+            searchParams={searchParams}
+            session={session}
+            isValidVideoURL={isValidVideoURL}
+            savedPlaybackTime={savedPlaybackTime}
+          />
+        </div>
+      </PlaybackCoordinatorProvider>
+    </Suspense>
   )
 }

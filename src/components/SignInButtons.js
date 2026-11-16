@@ -1,23 +1,13 @@
 'use client'
 
-import { useEffect } from 'react'
 import { authClient } from '@src/lib/auth-client'
 import { normalizeAuthCallbackURL } from '@src/utils/authCallbackUrl'
-import { clearPlaybackMirror } from '@components/SyncClientWithServerWatched'
 import GoogleButton from 'react-google-button'
 import { DiscordLoginButton, FacebookLoginButton } from 'react-social-login-buttons'
 
 export default function SignInButtons({ callbackUrl = '/list', enabledProviders = {} }) {
   const { google: isGoogleEnabled, discord: isDiscordEnabled, facebook: isFacebookEnabled } = enabledProviders
   const normalizedCallbackUrl = normalizeAuthCallbackURL(callbackUrl, '/list')
-
-  // Whoever signs in from here need not be whoever used this browser last
-  // (a session that expired, a sign-out that did not go through
-  // SignOutButton). The positions it mirrors are keyed by title, not by user,
-  // so they go before the next account can read them as its own.
-  useEffect(() => {
-    clearPlaybackMirror()
-  }, [])
 
   // Check if any auth providers are enabled
   const hasAnyProvider = isGoogleEnabled || isDiscordEnabled || isFacebookEnabled
