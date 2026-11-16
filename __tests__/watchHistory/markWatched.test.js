@@ -1,19 +1,23 @@
 /**
- * The "Mark watched" helper: the exact playback write it posts, the mirror
- * keys it primes, the SWR key it revalidates, and the three fixed messages
- * it throws (never a host, a path or the server's response text).
+ * The "Mark watched" helper: the exact playback write it posts (the viewer's
+ * own statement, kind 'mark'), the row it hands the positions store from the
+ * save's answer (no time made in the browser, nothing put in localStorage),
+ * and the three fixed messages it throws (never a host, a path or the
+ * server's response text).
  */
 
-jest.mock('swr', () => ({ __esModule: true, default: jest.fn(), mutate: jest.fn() }))
+const mockStore = { reportChanged: jest.fn() }
+jest.mock('@components/WatchProgress/playbackStore', () => ({ playbackStore: mockStore }))
 
-const { mutate } = require('swr')
-const { markWatched, PLAYBACK_POSITION_KEY } = require('@components/WatchProgress/markWatched')
+const { markWatched } = require('@components/WatchProgress/markWatched')
 
-const VIDEO_URL = 'https://files.example.com/tv/Preacher/Season%201/S01E01.mp4'
+const VIDEO_URL = 'https://files.example.com/tv/Example%20Show/Season%201/S01E01.mp4'
+const SAVED_AT = '2026-11-16T20:00:00.000Z'
 
 const episode = {
   _id: '6a550c58025dd5c7f7266e71',
   mediaId: 'mid:0123456789abcdef:s01e01',
+  normalizedVideoId: 'nid-s01e01',
   videoURL: VIDEO_URL,
   durationMs: 3_841_000,
   showId: '6a550c57025dd5c7f7266e55',
@@ -22,18 +26,25 @@ const episode = {
 }
 
 const sentBody = () => JSON.parse(global.fetch.mock.calls[0][1].body)
+const saved = (body = {}) => ({
+  ok: true,
+  status: 200,
+  json: async () => ({ message: 'Playback status updated successfully', acknowledged: true, kind: 'mark', savedAt: SAVED_AT, outcome: 'created', ...body }),
+})
+
+const setItem = jest.spyOn(Storage.prototype, 'setItem')
 
 beforeEach(() => {
+  jest.clearAllMocks()
   window.localStorage.clear()
-  mutate.mockClear()
-  mutate.mockResolvedValue(undefined)
-  global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
+  setItem.mockClear()
+  global.fetch = jest.fn().mockResolvedValue(saved())
 })
 
 const PAGE = { userId: 'u1' }
 
 describe('markWatched', () => {
-  it('posts a seek to the runtime through updatePlayback, mirroring the player metadata', async () => {
+  it('posts a mark at the runtime through updatePlayback, with the player’s metadata', async () => {
     const result = await markWatched(episode, PAGE)
 
     expect(result).toEqual({ playbackTime: 3841 })
@@ -48,9 +59,12 @@ describe('markWatched', () => {
     const body = sentBody()
     expect(body.videoId).toBe(VIDEO_URL)
     expect(body.playbackTime).toBe(3841)
-    expect(body.kind).toBe('seek')
+    // The viewer's statement, not a player's report: it creates the row whatever the position
+    expect(body.kind).toBe('mark')
     expect(body.isPaused).toBe(true)
+    // A mark that named a session or a cast would be refused
     expect(body.sessionId).toBeUndefined()
+    expect(body.source).toBeUndefined()
     expect(body.mediaMetadata).toEqual({
       mediaType: 'tv',
       mediaId: '6a550c58025dd5c7f7266e71',
@@ -74,32 +88,49 @@ describe('markWatched', () => {
     expect(sentBody().mediaMetadata.seasonNumber).toBe(0)
   })
 
-  it('primes the local mirror under the durable id and the URL, then revalidates the position key', async () => {
-    const before = Date.now()
-    await markWatched(episode)
+  it('hands the store the row from the save’s answer: the position sent and the server’s time, under the title’s two ids', async () => {
+    await markWatched(episode, PAGE)
 
-    for (const key of [episode.mediaId, VIDEO_URL]) {
-      const stored = JSON.parse(window.localStorage.getItem(key))
-      expect(stored.playbackTime).toBe(3841)
-      expect(new Date(stored.lastUpdated).getTime()).toBeGreaterThanOrEqual(before)
-    }
-    expect(mutate).toHaveBeenCalledTimes(1)
-    expect(mutate).toHaveBeenCalledWith(PLAYBACK_POSITION_KEY(VIDEO_URL))
-    expect(PLAYBACK_POSITION_KEY(VIDEO_URL)).toBe(`/api/authenticated/sync/playback?videoId=${encodeURIComponent(VIDEO_URL)}`)
+    expect(mockStore.reportChanged).toHaveBeenCalledTimes(1)
+    expect(mockStore.reportChanged).toHaveBeenCalledWith({
+      userId: 'u1',
+      keys: [{ mediaId: 'mid:0123456789abcdef:s01e01', normalizedVideoId: 'nid-s01e01' }],
+      saved: { mediaId: 'mid:0123456789abcdef:s01e01', normalizedVideoId: 'nid-s01e01', playbackTime: 3841, savedAt: SAVED_AT },
+    })
   })
 
-  it('mirrors only the URL when the episode has no durable id', async () => {
-    await markWatched({ ...episode, mediaId: null })
+  it('makes no time of its own, and puts nothing in localStorage', async () => {
+    const now = jest.spyOn(Date, 'now')
+    await markWatched(episode, PAGE)
 
-    expect(window.localStorage.getItem(VIDEO_URL)).not.toBeNull()
-    expect(window.localStorage.length).toBe(1)
+    expect(now).not.toHaveBeenCalled()
+    expect(setItem).not.toHaveBeenCalled()
+    expect(window.localStorage.length).toBe(0)
+    now.mockRestore()
+  })
+
+  it('an episode with no durable id is filed by its hash alone; a document id is no identity', async () => {
+    await markWatched({ ...episode, mediaId: '64b7f0c2a1b2c3d4e5f60799' }, PAGE)
+
+    expect(mockStore.reportChanged.mock.calls[0][0].keys).toEqual([{ mediaId: null, normalizedVideoId: 'nid-s01e01' }])
+  })
+
+  it('an answer with no savedAt still tells the tabs the title changed, and shows no row it cannot date', async () => {
+    global.fetch.mockResolvedValue(saved({ savedAt: null, outcome: 'held' }))
+    await markWatched(episode, PAGE)
+    expect(mockStore.reportChanged).toHaveBeenCalledWith(expect.objectContaining({ saved: null, keys: [expect.any(Object)] }))
+
+    // An answer that is not JSON at all
+    mockStore.reportChanged.mockClear()
+    global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => Promise.reject(new SyntaxError('Unexpected token')) })
+    await expect(markWatched(episode, PAGE)).resolves.toEqual({ playbackTime: 3841 })
+    expect(mockStore.reportChanged).toHaveBeenCalledWith(expect.objectContaining({ saved: null }))
   })
 
   it('says to reload when the session has become another account’s since the page was rendered', async () => {
     global.fetch.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'USER_MISMATCH' }) })
     await expect(markWatched(episode, PAGE)).rejects.toThrow('This page was opened for another account. Reload it.')
-    expect(window.localStorage.length).toBe(0)
-    expect(mutate).not.toHaveBeenCalled()
+    expect(mockStore.reportChanged).not.toHaveBeenCalled()
   })
 
   it('a page rendered for no one names no one (the server refuses it)', async () => {
@@ -107,13 +138,12 @@ describe('markWatched', () => {
     expect(global.fetch.mock.calls[0][1].headers).toEqual({ 'Content-Type': 'application/json' })
   })
 
-  it('throws the status number alone on a failed write, touching nothing locally', async () => {
+  it('throws the status number alone on a failed write, telling the store nothing', async () => {
     global.fetch.mockResolvedValue({ ok: false, status: 500, statusText: 'Internal Server Error at files.example.com', json: async () => ({ error: '/mnt/media/tv' }) })
 
     await expect(markWatched(episode)).rejects.toThrow('Mark watched failed (500)')
     await expect(markWatched(episode)).rejects.not.toThrow(/example\.com|\/mnt/)
-    expect(window.localStorage.length).toBe(0)
-    expect(mutate).not.toHaveBeenCalled()
+    expect(mockStore.reportChanged).not.toHaveBeenCalled()
   })
 
   it('refuses an episode with no playable file', async () => {

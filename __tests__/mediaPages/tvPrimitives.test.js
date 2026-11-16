@@ -57,7 +57,6 @@ jest.mock('react-toastify', () => ({
 
 jest.mock('@components/WatchProgress/markWatched', () => ({
   markWatched: jest.fn().mockResolvedValue({ playbackTime: 3841 }),
-  PLAYBACK_POSITION_KEY: (u) => u,
 }))
 
 const { Trail, Chip, MetaLine, DetailsPanel, PRIMARY_CLASSES, SECONDARY_CLASSES } = require('@components/MediaPages/details/Primitives')

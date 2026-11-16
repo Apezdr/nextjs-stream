@@ -53,7 +53,6 @@ jest.mock('react-toastify', () => ({
 
 jest.mock('@components/WatchProgress/markWatched', () => ({
   markWatched: jest.fn().mockResolvedValue({ playbackTime: 2940 }),
-  PLAYBACK_POSITION_KEY: (u) => u,
 }))
 
 jest.mock('@src/utils/flatDatabaseUtils', () => ({

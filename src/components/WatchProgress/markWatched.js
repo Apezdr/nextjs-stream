@@ -1,29 +1,27 @@
 /**
  * "Mark watched" for one episode, from the season page's action dialog.
  *
- * Writes go where every playback write goes: POST updatePlayback with a
- * `kind` from writeKinds ('seek' — a deliberate jump to the end) and the
+ * Writes go where every playback write goes: POST updatePlayback, with the
+ * `kind` the viewer's own statement has in writeKinds ('mark') and the
  * position at the runtime, so the server's own 95% rule marks the row
- * complete. The body mirrors what the web player sends (mediaMetadata with
- * the document `_id`; the server resolves its own durable `mid:`).
- * `isPaused: true` and no sessionId keep it from opening a presence
- * heartbeat. Like every browser playback write it names the user the page
- * was rendered for, and the server refuses it when the session has become
- * someone else's (a sign-in in another tab: src/lib/playbackUser.ts).
+ * complete. A mark is no player's report: it creates the row whatever the
+ * position, carries no sessionId and opens no presence. The body's
+ * mediaMetadata is what the web player sends (the document `_id`; the server
+ * resolves its own durable `mid:`). Like every browser playback write it
+ * names the user the page was rendered for, and the server refuses it when
+ * the session has become someone else's (a sign-in in another tab:
+ * src/lib/playbackUser.ts).
  *
- * On success the localStorage mirror is primed under the same keys
- * SyncClientWithServerWatched writes (the 'mid:' mediaId and the raw
- * videoURL), so useLiveProgress flips the row at once, and the per-title
- * SWR key is revalidated for any surface reading useWatchPosition.
+ * On success the positions store is given the row from the save's answer
+ * (the position sent and the server's `savedAt`), so every surface of this
+ * tab flips at once, and the other tabs are told the title changed. No time
+ * is made in the browser.
  *
- * Client-only (fetch, localStorage); no React.
+ * Client-only (fetch); no React.
  */
 
-import { mutate } from 'swr'
 import { playbackWriteHeaders } from '@src/lib/playbackUser'
-
-/** The SWR key useWatchPosition reads this title's position under. */
-export const PLAYBACK_POSITION_KEY = (videoURL) => `/api/authenticated/sync/playback?videoId=${encodeURIComponent(videoURL)}`
+import { playbackStore } from './playbackStore'
 
 const UPDATE_ENDPOINT = '/api/authenticated/sync/updatePlayback'
 
@@ -31,18 +29,13 @@ function dropUndefined(object) {
   return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined))
 }
 
-function writeMirror(key, value) {
-  try {
-    window.localStorage.setItem(key, value)
-  } catch {
-    // Private mode / quota: the server row still reaches the mirror on the next sync.
-  }
-}
+const isDurable = (id) => typeof id === 'string' && id.startsWith('mid:')
 
 /**
  * @param {Object} episode
  * @param {string|null} [episode._id] - the FlatEpisodes document id (what the player sends as mediaId)
- * @param {string|null} [episode.mediaId] - durable 'mid:…' identity, the mirror's preferred key
+ * @param {string|null} [episode.mediaId] - durable 'mid:…' identity
+ * @param {string|null} [episode.normalizedVideoId] - the hash of the episode's file, as the server gave it
  * @param {string|null} episode.videoURL
  * @param {number|null} episode.durationMs
  * @param {string|null} [episode.showId]
@@ -55,7 +48,7 @@ function writeMirror(key, value) {
  *   'This page was opened for another account. Reload it.' | 'Mark watched failed (<status>)'
  */
 export async function markWatched(
-  { _id = null, mediaId = null, videoURL, durationMs, showId = null, seasonNumber, episodeNumber },
+  { _id = null, mediaId = null, normalizedVideoId = null, videoURL, durationMs, showId = null, seasonNumber, episodeNumber },
   { userId = null } = {}
 ) {
   if (!videoURL) throw new Error('This episode has no playable file')
@@ -70,7 +63,7 @@ export async function markWatched(
     body: JSON.stringify({
       videoId: videoURL,
       playbackTime,
-      kind: 'seek',
+      kind: 'mark',
       isPaused: true,
       mediaMetadata: dropUndefined({
         mediaType: 'tv',
@@ -86,11 +79,14 @@ export async function markWatched(
   if (res.status === 409) throw new Error('This page was opened for another account. Reload it.')
   if (!res.ok) throw new Error(`Mark watched failed (${res.status})`)
 
-  const entry = JSON.stringify({ playbackTime, lastUpdated: new Date().toISOString() })
-  if (typeof mediaId === 'string' && mediaId.startsWith('mid:')) writeMirror(mediaId, entry)
-  writeMirror(videoURL, entry)
-
-  await mutate(PLAYBACK_POSITION_KEY(videoURL))
+  // The row as the server wrote it: `savedAt` is its lastUpdated, by the server's clock
+  const answer = await res.json().catch(() => null)
+  const title = { mediaId: isDurable(mediaId) ? mediaId : null, normalizedVideoId: normalizedVideoId || null }
+  playbackStore.reportChanged({
+    userId,
+    keys: [title],
+    saved: typeof answer?.savedAt === 'string' ? { ...title, playbackTime, savedAt: answer.savedAt } : null,
+  })
 
   return { playbackTime }
 }

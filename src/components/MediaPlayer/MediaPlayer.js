@@ -299,11 +299,17 @@ async function VideoPlayer({
   // so the proxy that keeps a read-only view-as session from writing would
   // never see those reports land on the user's watch history. (A token minted
   // with writes on keeps reporting until it expires, after writes go off.)
+  // The hash of the URL this page plays: what the server files the position
+  // under, so the browser never hashes anything. The Cast token is scoped to
+  // it, and the player names the title by it to this browser's progress
+  // surfaces (playbackStore.js).
+  const normalizedVideoId = videoURL ? generateNormalizedVideoId(videoURL) : null
+
   const castPlaybackToken =
     session?.user?.id && !isAwaitingApproval(session.user) && (!isImpersonating(session) || isViewAsWritesOn(session)) && videoURL
       ? mintCastPlaybackToken({
           userId: session.user.id,
-          normalizedVideoId: generateNormalizedVideoId(videoURL),
+          normalizedVideoId,
           metadata: {
             mediaType,
             showId: mediaType === 'tv' ? media.showId ?? null : null,
@@ -358,6 +364,7 @@ async function VideoPlayer({
         start={start}
         savedPlaybackTime={savedPlaybackTime}
         mediaId={media.mediaId || null}
+        normalizedVideoId={normalizedVideoId}
         playbackMetadata={{
           mediaType: mediaType,
           mediaId: media._id,

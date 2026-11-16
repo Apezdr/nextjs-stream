@@ -79,8 +79,9 @@ function DialogBody({ episode, completed, onClose, onMarked, userId }) {
  * the active row's data or null.
  *
  * Mark watched posts the finished position through markWatched, which also
- * primes the local mirror, so the row behind the dialog flips to "Watched"
- * the moment it closes; `onMarked` lets the page refresh its server data.
+ * hands the saved row to the positions store, so the row behind the dialog
+ * flips to "Watched" the moment it closes; `onMarked` lets the page refresh
+ * its server data.
  * `userId` is the user the page was rendered for, whom the write names.
  *
  * @param {{ open: boolean, episode: import('./EpisodeRow').EpisodeRowData|null, onClose: () => void, onMarked?: ((episode: Object) => void)|null, userId?: string|null }} props

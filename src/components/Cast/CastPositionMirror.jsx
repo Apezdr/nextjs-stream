@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { playbackWriteHeaders } from '@src/lib/playbackUser'
+import { playbackStore } from '@components/WatchProgress/playbackStore'
 import useCastSession from './useCastSession'
 import { getRemote, readFinalRemotePosition } from './castSdk'
 
@@ -37,6 +38,14 @@ import { getRemote, readFinalRemotePosition } from './castSdk'
  * it in), and the server refuses one once the browser's session is someone
  * else's (src/lib/playbackUser.ts). A document rendered for no one reports
  * nothing.
+ *
+ * The progress bars of this browser: while the cast runs they follow the
+ * cast's own presence session, which the receiver writes whether a sender is
+ * connected or not (playbackStore.js reads it from the presence store). The
+ * mirror knows the receiver's URL and not the title's ids, and the browser
+ * hashes nothing, so it names no title to the positions store. What it does
+ * tell it is that the cast ended and its last position is saved: every tab
+ * then asks for the rows again.
  */
 
 const TICK_MS = 15000
@@ -45,6 +54,7 @@ const MIN_POSITION_S = 2
 /** Movement smaller than this with no pause flip is not worth a write. */
 const MIN_DELTA_S = 1
 
+/** Resolves to whether the server took the report. Never rejects. */
 function postPosition({ videoId, playbackTime, isPaused, keepalive = false, userId }) {
   return fetch('/api/authenticated/sync/updatePlayback', {
     method: 'POST',
@@ -57,21 +67,11 @@ function postPosition({ videoId, playbackTime, isPaused, keepalive = false, user
       isPaused,
       source: 'cast-mirror',
     }),
-  }).catch(() => {
-    /* dropped on purpose — the next tick carries a fresher position */
-  })
-}
-
-/** Keep the local restore paths in agreement with what the TV has reached. */
-function writeLocalPosition(videoId, playbackTime) {
-  try {
-    globalThis.localStorage?.setItem(
-      videoId,
-      JSON.stringify({ playbackTime, lastUpdated: new Date().toISOString() })
-    )
-  } catch {
-    /* storage unavailable or full */
-  }
+  }).then(
+    (response) => response?.ok === true,
+    // dropped on purpose: the next tick carries a fresher position
+    () => false
+  )
 }
 
 export default function CastPositionMirror({ userId = null }) {
@@ -101,7 +101,6 @@ export default function CastPositionMirror({ userId = null }) {
       if (last && Math.abs(time - last.time) < MIN_DELTA_S && last.isPaused === isPaused) return
 
       lastSentRef.current = { time, isPaused }
-      writeLocalPosition(videoId, time)
       postPosition({ videoId, playbackTime: time, isPaused, userId })
     }
 
@@ -128,13 +127,16 @@ export default function CastPositionMirror({ userId = null }) {
     const finalId = final.contentUrl || final.contentId
     if (!finalId) return
 
-    writeLocalPosition(finalId, final.time)
     postPosition({
       videoId: finalId,
       playbackTime: final.time,
       isPaused: true,
       keepalive: true,
       userId,
+    }).then((saved) => {
+      // The television's last position is the row's now: the bars of every
+      // tab catch up with it
+      if (saved) playbackStore.reportChanged({ userId })
     })
   }, [active, ending, userId])
 

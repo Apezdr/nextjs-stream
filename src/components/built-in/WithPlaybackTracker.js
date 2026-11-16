@@ -5,8 +5,8 @@ import { Player } from '@components/MediaPlayer/videojs';
 import usePlaybackReady from '@components/MediaPlayer/usePlaybackReady';
 import throttle from 'lodash/throttle';
 import { usePathname } from 'next/navigation';
-import { getPlaybackStorageKey } from '@src/utils/playbackStorageKey';
 import { playbackWriteHeaders } from '@src/lib/playbackUser';
+import { playbackStore } from '@components/WatchProgress/playbackStore';
 
 // Presence ping cadence while paused and foregrounded. Coarser than the 1s
 // playing heartbeat on purpose — see plans/media-activity-presence.md.
@@ -17,8 +17,7 @@ const PRESENCE_END_URL = '/api/authenticated/sync/presence/end';
 // Never persist a position this close to the start. A resume point in the
 // first seconds is worthless, and a spurious ~0 — e.g. the Cast provider
 // forcing the element to 0 on disconnect, see CastResumeGuard — otherwise
-// overwrites a real resume point in both localStorage and Mongo within ~250ms,
-// unrecoverably. The only behaviour lost is "restarted a title and left again
+// overwrites a real resume point in Mongo within ~250ms, unrecoverably. The only behaviour lost is "restarted a title and left again
 // within two seconds".
 const MIN_PERSISTED_POSITION_S = 2;
 
@@ -44,9 +43,8 @@ function generateSessionId() {
 export default function WithPlayBackTracker({
   videoURL,
   mediaMetadata = null,
-  // Where this mount starts, resolved once by MainVideoPlayer (deep link >
-  // server watch history > localStorage, re-read from the server on an
-  // Activity re-show). 0 is an explicit restart; null means "from the top".
+  // Where this mount starts, resolved once by MainVideoPlayer (a deep link,
+  // else the server's row). 0 is an explicit restart; null means "from the top".
   resumeAt = null,
   // True when hls.js was handed `resumeAt` as startPosition and will land the
   // element there itself once the first fragment at that point is buffered.
@@ -58,9 +56,12 @@ export default function WithPlayBackTracker({
   // True when the page was opened with a `?start=` deep link; the address
   // bar is cleaned up once the position has been applied.
   clearStartParam = false,
-  // Stable content identity ('mid:…') when resolved; null/absent falls back
-  // to the legacy videoURL key so behavior is unchanged for unresolved titles.
+  // The title's two identities, from the server render: the durable id
+  // ('mid:…', when the catalog resolved one) and the hash of the URL being
+  // played. The progress surfaces of this browser find the title by them
+  // (playbackStore.js); the saves themselves still name the raw videoURL.
   mediaId = null,
+  normalizedVideoId = null,
   // True while a Cast receiver is playing THIS title and the transport bridge
   // is mirroring it. The position on screen then belongs to the television.
   castAdopted = false,
@@ -70,9 +71,6 @@ export default function WithPlayBackTracker({
   userId = null
 }) {
   const store = Player.usePlayer();
-  // localStorage progress key: stable identity when available, else videoURL.
-  // The worker payload keeps sending the raw videoURL (server contract).
-  const storageKey = getPlaybackStorageKey({ mediaId, videoURL });
   // Not the store's `canPlay` (readyState 4, sampled on four events). Against
   // the JIT origin that sample can simply never land, and then the saved
   // position is never applied and no progress is ever written. These are read
@@ -83,7 +81,6 @@ export default function WithPlayBackTracker({
   const paused = Player.usePlayer((s) => s.paused);
   const [, setLastTimeSent] = useState(0);
   const isFetchingRef = useRef(false);
-  const nextUpdateTimeRef = useRef(null);
   const pausedRef = useRef(false);
   const updatePlaybackWorkerRef = useRef(null);
   // Set once the resume position has been applied (or found unnecessary).
@@ -91,11 +88,42 @@ export default function WithPlayBackTracker({
   // the resume seek reports the player booting, not a viewing position.
   const hasAppliedStartRef = useRef(false);
   const localIpRef = useRef(null);
-  const latestRef = useRef({ store: null, videoURL: null, mediaMetadata: null, castAdopted: false, userId: null });
+  const latestRef = useRef({ store: null, videoURL: null, mediaMetadata: null, castAdopted: false, userId: null, mediaId: null, normalizedVideoId: null });
   const sessionIdRef = useRef(null);
   if (sessionIdRef.current === null) {
     sessionIdRef.current = generateSessionId();
   }
+  // The last position this mount told the positions store it is at, while it
+  // counts as playing there; null before the first and after it said it stopped.
+  const liveRef = useRef(null);
+
+  // What this tab is playing, for every progress surface of this browser: the
+  // store shows it in this tab and tells the other tabs (every 5 s at most,
+  // at once on pause, unpause and seek). Display only: nothing resumes from
+  // it, and nothing is written to browser storage.
+  const reportLive = (playbackTime) => {
+    const { userId: user, mediaId: mid, normalizedVideoId: nid } = latestRef.current;
+    liveRef.current = { playbackTime };
+    playbackStore.reportPosition({
+      userId: user,
+      mediaId: mid,
+      normalizedVideoId: nid,
+      playbackTime,
+      paused: pausedRef.current,
+      sessionId: sessionIdRef.current,
+    });
+  };
+
+  // This mount stopped being what plays the title here: unmount, the page
+  // leaving, a cast taking it over. The store keeps the last position on show
+  // until the server's row has it. A no-op when it never played.
+  const endLive = (finalTime, sessionId = sessionIdRef.current) => {
+    if (!liveRef.current) return;
+    const playbackTime = Number.isFinite(finalTime) ? finalTime : liveRef.current.playbackTime;
+    liveRef.current = null;
+    const { userId: user, mediaId: mid, normalizedVideoId: nid } = latestRef.current;
+    playbackStore.reportEnded({ userId: user, mediaId: mid, normalizedVideoId: nid, playbackTime, sessionId });
+  };
 
   const pathname = usePathname();
 
@@ -253,16 +281,14 @@ export default function WithPlayBackTracker({
     if (castAdopted) return;
 
     const throttledUpdateServer = throttle((currentTime) => {
+      // Whether or not a save is in flight: the bars show where this tab is,
+      // not what the server last acknowledged.
+      reportLive(currentTime);
+
+      // One save in flight at a time; a tick that finds one skips, and the
+      // next carries the then-current position.
       if (!isFetchingRef.current) {
         isFetchingRef.current = true;
-
-        localStorage.setItem(
-          storageKey,
-          JSON.stringify({
-            playbackTime: currentTime,
-            lastUpdated: new Date().toISOString(),
-          })
-        );
 
         // Send the current playback time to the worker.
         updatePlaybackWorkerRef.current.postMessage({
@@ -274,8 +300,6 @@ export default function WithPlayBackTracker({
           sessionId: sessionIdRef.current,
           headers: playbackWriteHeaders(userId),
         });
-      } else {
-        nextUpdateTimeRef.current = currentTime;
       }
     }, 1000); // Throttle to 1 second.
 
@@ -294,7 +318,7 @@ export default function WithPlayBackTracker({
       unsubscribe();
       throttledUpdateServer.cancel();
     };
-  }, [store, storageKey, videoURL, canTrack, mediaMetadata, castAdopted, userId]);
+  }, [store, videoURL, canTrack, mediaMetadata, castAdopted, userId]);
 
   // Send a heartbeat whenever the paused state changes so the live activity
   // view keeps showing the session (as paused) instead of dropping it.
@@ -305,6 +329,8 @@ export default function WithPlayBackTracker({
     if (!hasAppliedStartRef.current) return;
     const currentTime = store.currentTime || 0;
     if (currentTime <= MIN_PERSISTED_POSITION_S) return;
+    // The other tabs hear a pause or an unpause at once
+    reportLive(currentTime);
     updatePlaybackWorkerRef.current.postMessage({
       videoURL,
       currentTime,
@@ -359,9 +385,10 @@ export default function WithPlayBackTracker({
     return () => clearInterval(interval);
   }, [canTrack, store, videoURL, mediaMetadata, castAdopted, userId]);
 
-  // Latest values for the unload path below, which is bound once per mount.
+  // Latest values for the unload path below, which is bound once per mount,
+  // and for what this mount tells the positions store.
   useEffect(() => {
-    latestRef.current = { store, videoURL, mediaMetadata, castAdopted, userId };
+    latestRef.current = { store, videoURL, mediaMetadata, castAdopted, userId, mediaId, normalizedVideoId };
   });
 
   // Once a receiver adopts this title, the television is the viewing session
@@ -373,6 +400,9 @@ export default function WithPlayBackTracker({
     if (!castAdopted) return;
     const sessionId = sessionIdRef.current;
     sessionIdRef.current = generateSessionId();
+    // Nor is this tab what plays the title any more: the cast's own session
+    // is what the progress surfaces follow from here
+    endLive(null, sessionId);
     try {
       fetch(PRESENCE_END_URL, {
         method: 'POST',
@@ -400,22 +430,23 @@ export default function WithPlayBackTracker({
   // in the admin's history.
   useEffect(() => {
     let flushed = false;
+    // Returns the position it saved, or null when it saved nothing.
     const flushFinal = () => {
-      if (flushed) return;
+      if (flushed) return null;
       const { store: s, videoURL: url, mediaMetadata: meta, castAdopted: adopted, userId: user } = latestRef.current;
       // The television owns the position while adopted; nothing to flush.
-      if (adopted || !s || !url) return;
+      if (adopted || !s || !url) return null;
       // Never flush a position the saved point was not applied to yet: a
       // tab closed before the resume seek landed would write ~0 forward.
-      if (!hasAppliedStartRef.current) return;
+      if (!hasAppliedStartRef.current) return null;
       let currentTime = 0;
       try {
-        if (!s.target) return;
+        if (!s.target) return null;
         currentTime = s.currentTime || 0;
       } catch {
-        return;
+        return null;
       }
-      if (currentTime <= MIN_PERSISTED_POSITION_S) return;
+      if (currentTime <= MIN_PERSISTED_POSITION_S) return null;
       flushed = true;
       try {
         fetch('/api/authenticated/sync/updatePlayback', {
@@ -434,6 +465,7 @@ export default function WithPlayBackTracker({
       } catch {
         // Best-effort — the last throttled heartbeat is the backstop.
       }
+      return currentTime;
     };
 
     const endPresence = () => {
@@ -451,9 +483,17 @@ export default function WithPlayBackTracker({
       }
     };
 
-    const handlePageHide = () => {
-      flushFinal();
+    // After the final save, the tabs of this browser are told this one
+    // stopped: with the position just saved, or the last one it reported when
+    // the final save had nothing to read (the media was already detached).
+    const leave = () => {
+      const finalTime = flushFinal();
       endPresence();
+      endLive(finalTime);
+    };
+
+    const handlePageHide = () => {
+      leave();
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden' && pausedRef.current) {
@@ -467,8 +507,7 @@ export default function WithPlayBackTracker({
     return () => {
       window.removeEventListener('pagehide', handlePageHide);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      flushFinal();
-      endPresence();
+      leave();
     };
   }, []);
 

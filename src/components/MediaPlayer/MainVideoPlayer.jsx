@@ -44,7 +44,7 @@ import { parseExplicitStart } from './resumePosition'
  *
  * Unmounting the subtree while hidden sidesteps all of it — a fresh mount on
  * return re-runs every setup. Playback position is not lost: WithPlaybackTracker
- * persists it every second and seeks on canPlay. The page itself stays cached,
+ * saves it to the server every second and seeks on canPlay. The page itself stays cached,
  * so the shell, scroll position and surrounding state are still instant.
  */
 export default function MainVideoPlayer(props) {
@@ -146,6 +146,7 @@ function ActivePlayerBody({
   clipEndTime,
   savedPlaybackTime,
   mediaId,
+  normalizedVideoId,
   playbackMetadata,
   mediaKey,
   castReceiverId,
@@ -279,6 +280,7 @@ function ActivePlayerBody({
             <WithPlaybackTracker
               videoURL={videoURL}
               mediaId={mediaId}
+              normalizedVideoId={normalizedVideoId}
               resumeAt={resumeAt}
               engineOwnsResume={engineOwnsResume}
               clearStartParam={explicitStart !== null}
