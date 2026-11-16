@@ -5,19 +5,21 @@ import Link from 'next/link'
 import { Description, Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { toast } from 'react-toastify'
+import { confirmsDeletion, deletionConfirmationFor } from '@src/utils/deletionConfirmation'
 
 const DELETE_ACCOUNT_URL = '/api/authenticated/admin/delete-account'
 
 const FOCUS_RING =
   'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300'
 
-/**
- * Whether what was typed is the account's email: case and the spaces around
- * it aside, as the route compares it again.
- */
-export function confirmsEmail(typed, email) {
-  const expected = String(email ?? '').trim().toLowerCase()
-  return expected !== '' && String(typed ?? '').trim().toLowerCase() === expected
+// What the admin is asked to type, by what the account can be confirmed with
+// (src/utils/deletionConfirmation.js): its email, or, for an account that has
+// none, its name, or failing that its id. `record` is how the deletion's
+// record will name the account.
+const CONFIRM_WITH = {
+  email: { ask: 'Type the account’s email to confirm', record: 'email' },
+  name: { ask: 'This account has no email address. Type its name to confirm', record: 'name' },
+  id: { ask: 'This account has no email address and no name. Type its id to confirm', record: 'id' },
 }
 
 /**
@@ -27,44 +29,78 @@ export function confirmsEmail(typed, email) {
 function DialogBody({ user, onClose, onDeleted, pending, setPending }) {
   const [typed, setTyped] = useState('')
   const [reason, setReason] = useState('')
-  // { message, requestId? }: requestId when the deletion began and stopped
+  // { message, checkRequests }: checkRequests when the deletion began, or may
+  // have: the Deletion Requests page is then where to see what happened
   const [failure, setFailure] = useState(null)
-  const emailInputId = useId()
-  const emailHintId = useId()
+  const confirmInputId = useId()
+  const confirmHintId = useId()
   const reasonInputId = useId()
 
-  const label = user.name || user.email
-  const confirmed = confirmsEmail(typed, user.email)
+  // In messages: the account by its name or email, or as "this account"
+  const label = user.name || user.email || ''
+  const whose = label ? `${label}’s account` : 'this account'
+  const confirmation = deletionConfirmationFor(user)
+  const confirmWith = CONFIRM_WITH[confirmation.kind]
+  const confirmed = confirmsDeletion(typed, user)
+
+  /**
+   * Read the list again. Whether that worked is a separate matter from
+   * whether the account was deleted: a refresh that fails must never be
+   * reported as a deletion that failed (it once was: "Nothing was deleted",
+   * said of an account that was gone).
+   */
+  const refreshList = async () => {
+    try {
+      await onDeleted?.()
+      return true
+    } catch {
+      return false
+    }
+  }
 
   const handleSubmit = async (event) => {
     event.preventDefault()
     if (!confirmed || pending) return
     setPending(true)
     setFailure(null)
+
+    let response
+    let body
     try {
-      const response = await fetch(DELETE_ACCOUNT_URL, {
+      response = await fetch(DELETE_ACCOUNT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, email: typed.trim(), reason: reason.trim() || null }),
+        body: JSON.stringify({ userId: user.id, confirmation: typed.trim(), reason: reason.trim() || null }),
       })
-      const body = await response.json().catch(() => null)
-      if (response.ok && body?.success) {
-        toast.success(`Deleted ${label}’s account.`)
-        await onDeleted?.()
-        setPending(false)
-        onClose()
-        return
-      }
-      const message = body?.message || `Couldn’t delete the account (${response.status}).`
-      setFailure({ message, requestId: body?.error === 'DELETION_INCOMPLETE' ? body.requestId : null })
-      toast.error(`Couldn’t delete ${label}’s account: ${message}`)
-      // A deletion that began has changed the account: show the list as it is now
-      if (body?.error === 'DELETION_INCOMPLETE') await onDeleted?.()
+      body = await response.json().catch(() => null)
     } catch {
-      const message = 'The request didn’t reach the server. Nothing was deleted.'
-      setFailure({ message, requestId: null })
-      toast.error(`Couldn’t delete ${label}’s account: ${message}`)
+      // No answer at all. The request may never have left, or the deletion
+      // may have run and its answer been lost on the way back: this page
+      // cannot tell which, so it says where to look
+      const message = 'No answer came back from the server, so it isn’t known whether the account was deleted.'
+      setFailure({ message, checkRequests: true })
+      toast.error(`Deleting ${whose}: ${message}`)
+      await refreshList()
+      setPending(false)
+      return
     }
+
+    if (response.ok && body?.success) {
+      toast.success(label ? `Deleted ${whose}.` : 'Deleted the account.')
+      if (!(await refreshList())) {
+        toast.error('The account was deleted, but the list could not be read again. Reload the page to see it without that account.')
+      }
+      setPending(false)
+      onClose()
+      return
+    }
+
+    const message = body?.message || `Couldn’t delete the account (${response.status}).`
+    // A deletion that began has changed the account
+    const began = body?.error === 'DELETION_INCOMPLETE'
+    setFailure({ message, checkRequests: began })
+    toast.error(`Couldn’t delete ${whose}: ${message}`)
+    if (began) await refreshList()
     setPending(false)
   }
 
@@ -75,7 +111,7 @@ function DialogBody({ user, onClose, onDeleted, pending, setPending }) {
           <ExclamationTriangleIcon className="h-5 w-5" aria-hidden="true" />
         </span>
         <div className="min-w-0">
-          <DialogTitle className="text-lg font-semibold text-white">Delete {label}’s account?</DialogTitle>
+          <DialogTitle className="text-lg font-semibold text-white">Delete {whose}?</DialogTitle>
           <Description className="mt-1 text-sm text-rose-200">
             This can’t be undone. The account and its data are removed now.
           </Description>
@@ -86,7 +122,7 @@ function DialogBody({ user, onClose, onDeleted, pending, setPending }) {
         <div>
           <p className="font-medium text-white">Removed</p>
           <ul className="mt-1.5 list-disc space-y-1 pl-5">
-            <li>The account and its sign-in: its Google or Discord link, and every browser and device signed in with it</li>
+            <li>The account and its sign-in: its links to sign-in providers, and every browser and device signed in with it</li>
             <li>Its watch history and resume positions</li>
             <li>Its notifications</li>
             <li>Its private lists and its home-screen rows</li>
@@ -97,7 +133,9 @@ function DialogBody({ user, onClose, onDeleted, pending, setPending }) {
           <ul className="mt-1.5 list-disc space-y-1 pl-5">
             <li>Lists it shared with other people, which stay without an owner, and titles it added to other people’s lists</li>
             <li>Its Radarr and Sonarr requests, in the activity log</li>
-            <li>A record of this deletion under Deletion Requests, with the account’s email and your name</li>
+            <li>
+              A record of this deletion under Deletion Requests, with the account’s {confirmWith.record} and your name
+            </li>
           </ul>
         </div>
         <p className="text-slate-400">
@@ -106,16 +144,16 @@ function DialogBody({ user, onClose, onDeleted, pending, setPending }) {
       </div>
 
       <div className="mt-5">
-        <label htmlFor={emailInputId} className="block text-sm font-medium text-white">
-          Type the account’s email to confirm
+        <label htmlFor={confirmInputId} className="block text-sm font-medium text-white">
+          {confirmWith.ask}
         </label>
-        <p id={emailHintId} className="mt-1 break-all font-mono text-xs text-slate-400">
-          {user.email}
+        <p id={confirmHintId} className="mt-1 break-all font-mono text-xs text-slate-400">
+          {confirmation.value}
         </p>
         <input
-          id={emailInputId}
-          type="email"
-          name="confirm-email"
+          id={confirmInputId}
+          type={confirmation.kind === 'email' ? 'email' : 'text'}
+          name="confirmation"
           autoFocus
           autoComplete="off"
           autoCapitalize="none"
@@ -123,7 +161,7 @@ function DialogBody({ user, onClose, onDeleted, pending, setPending }) {
           value={typed}
           onChange={(event) => setTyped(event.target.value)}
           disabled={pending}
-          aria-describedby={emailHintId}
+          aria-describedby={confirmHintId}
           className="mt-2 block w-full rounded-xl border-0 bg-slate-950/60 px-3 py-2 text-sm text-white ring-1 ring-inset ring-white/15 placeholder:text-slate-500 focus:ring-2 focus:ring-inset focus:ring-rose-400 disabled:opacity-60"
         />
       </div>
@@ -148,7 +186,7 @@ function DialogBody({ user, onClose, onDeleted, pending, setPending }) {
       {failure && (
         <p role="alert" className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
           {failure.message}
-          {failure.requestId && (
+          {failure.checkRequests && (
             <>
               {' '}
               <Link href="/admin/deletion-requests" className="font-semibold underline underline-offset-2">
@@ -183,13 +221,15 @@ function DialogBody({ user, onClose, onDeleted, pending, setPending }) {
 /**
  * The Users page's "Delete account": an admin deletes an account that did not
  * ask to be deleted. It says what goes and what stays, and the button stays
- * off until the account's email has been typed. Focus is trapped and Escape
- * closes (Headless UI Dialog), except while the request is on its way.
+ * off until the account's confirmation has been typed: its email, or, for an
+ * account that has none (an old sign-in whose provider gave no address), its
+ * name, or failing that its id. Focus is trapped and Escape closes (Headless
+ * UI Dialog), except while the request is on its way.
  *
  * The route checks everything again (delete-account/route.ts): this dialog
  * only makes the mistake hard to make.
  *
- * @param {{ user: { id: string, name?: string, email: string }|null, onClose: () => void, onDeleted?: (() => unknown)|null }} props
+ * @param {{ user: { id: string, name?: string, email?: string }|null, onClose: () => void, onDeleted?: (() => unknown)|null }} props
  *   `user` null keeps the dialog closed. `onDeleted` runs after a deletion, and after one that began and stopped: the list has changed either way.
  */
 export default function DeleteAccountDialog({ user, onClose, onDeleted = null }) {

@@ -57,7 +57,8 @@ In the `Users` database:
 
 ```js
 {
-  _id, userId, email,            // the account, and its address when the request was made
+  _id, userId, email,            // the account, and its address when the request was made (null if it had none)
+  accountName,                   // requestType 'admin' only: the name of an account that had no email
   requestType,                   // 'authenticated' | 'public' | 'admin'
   status,                        // 'pending' | 'processing' | 'completed' | 'cancelled'
   reason, requestedAt,
@@ -183,14 +184,22 @@ An admin deletes an account that did not ask to be deleted (the Users page's
 through the same deletion as every other request. Nobody is notified.
 
 ```json
-{ "userId": "…", "email": "the account's email, as typed into the confirmation", "reason": "optional, kept with the request" }
+{ "userId": "…", "confirmation": "what the admin typed into the dialog", "reason": "optional, kept with the request" }
 ```
+
+The confirmation is the account's email. An account with no email (an old
+sign-in whose provider gave no address: such accounts exist) is confirmed by
+its name, and one with neither by its id: `src/utils/deletionConfirmation.js`,
+one rule for the dialog and the route. The request's record names the account
+the same way: `email`, or `accountName` with `email: null`, or the user id
+alone.
 
 Refused: a caller who is not an admin, a "View as" session (403 `VIEWING_AS`),
 a missing or malformed user id (400 `INVALID_USER_ID`), an account that does
 not exist (404 `USER_NOT_FOUND`), the admin's own account (403 `OWN_ACCOUNT`),
-an admin's account (403 `TARGET_IS_ADMIN`), and an email that is not the
-account's (400 `EMAIL_MISMATCH`). A deletion that began and stopped answers 500
+an admin's account (403 `TARGET_IS_ADMIN`), no confirmation (400
+`CONFIRMATION_REQUIRED`) and one that is not the account's (400
+`CONFIRMATION_MISMATCH`). A deletion that began and stopped answers 500
 `DELETION_INCOMPLETE` with the `requestId` to run again from the Deletion
 Requests page.
 

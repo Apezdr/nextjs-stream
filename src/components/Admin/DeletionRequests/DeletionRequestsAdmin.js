@@ -92,6 +92,12 @@ const auditLabels = {
   deletion_completed: 'Deletion completed'
 }
 
+/**
+ * What a request calls its account: its email, or the name of an account
+ * that had none (an old sign-in whose provider gave no address), or its id.
+ */
+const accountOf = (request) => request.email || request.accountName || request.userId
+
 /** A date as the page shows it; a request that has none yet shows a dash (formatDateToEST throws on a missing date). */
 const when = (value) => (value ? formatDateToEST(value) : '—')
 
@@ -321,7 +327,8 @@ export default function DeletionRequestsAdmin() {
 
                       <div className="flex items-center space-x-4">
                         <div className="text-sm text-white">
-                          {request.email || request.userId}
+                          {accountOf(request)}
+                          {!request.email && <span className="ml-2 text-xs font-normal text-slate-400">no email address</span>}
                         </div>
                         <div className="text-sm text-slate-400">
                           {when(request.requestedAt)}
@@ -332,7 +339,7 @@ export default function DeletionRequestsAdmin() {
                           className="rounded text-sm font-medium text-indigo-300 hover:text-indigo-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-300"
                         >
                           {isExpanded ? 'Hide' : 'Details'}
-                          <span className="sr-only"> for {request.email || request._id}</span>
+                          <span className="sr-only"> for {accountOf(request)}</span>
                         </button>
                       </div>
                     </div>
@@ -542,7 +549,7 @@ function RequestDetails({ request, onAction, actionLoading }) {
           <div className="space-y-3">
             {showActionForm === 'execute' ? (
               <p className="text-sm leading-relaxed text-slate-200">
-                This deletes {request.email}’s account and its data now. It can’t be undone.
+                This deletes {accountOf(request)}’s account and its data now. It can’t be undone.
                 {unverified && !stopped && ' Nobody has proved this request is theirs: it came from the public form.'}
                 {request.deletesAutomatically &&
                   ` The user has until ${when(request.scheduledDeletionAt)} to cancel: deleting now ends that early.`}

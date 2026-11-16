@@ -313,3 +313,19 @@ test('a list that cannot be loaded offers to try again', async () => {
 
   expect(await screen.findByText('ada@example.invalid')).toBeInTheDocument()
 })
+
+test('a deleted account that had no email is named by its name, or failing that its id, never left blank', async () => {
+  // Old sign-ins whose provider gave no address
+  const named = { ...adminDeletion, _id: 'r-noemail', userId: 'u8', email: null, accountName: 'Linus Old-Account' }
+  const bare = { ...adminDeletion, _id: 'r-bare', userId: '507f1f77bcf86cd799439044', email: null }
+  fakeRoute([named, bare])
+  render(<DeletionRequestsAdmin />)
+
+  const namedRow = (await screen.findByText('Linus Old-Account')).closest('li')
+  expect(within(namedRow).getByText('no email address')).toBeInTheDocument()
+  expect(within(namedRow).getByRole('button', { name: 'Details for Linus Old-Account' })).toBeInTheDocument()
+
+  const bareRow = screen.getByText('507f1f77bcf86cd799439044').closest('li')
+  expect(within(bareRow).getByText('no email address')).toBeInTheDocument()
+  expect(document.body).not.toHaveTextContent(/undefined|null/)
+})

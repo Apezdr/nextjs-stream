@@ -210,9 +210,14 @@ function UserListRecords({
                   </td>
 
                   <td className="max-w-[280px] px-6 py-5">
-                    <div className="truncate text-sm font-medium text-slate-200" title={item.email}>
-                      {item.email}
-                    </div>
+                    {item.email ? (
+                      <div className="truncate text-sm font-medium text-slate-200" title={item.email}>
+                        {item.email}
+                      </div>
+                    ) : (
+                      // An old sign-in whose provider gave no address
+                      <div className="text-sm italic text-slate-500">No email address</div>
+                    )}
                   </td>
 
                   <td className="px-6 py-5">

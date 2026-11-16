@@ -5,6 +5,7 @@ import { forgetUserSessions } from '@src/lib/authSessionStore'
 import { isAdminUser } from '@src/lib/roles/rules'
 import { deletePlaybackForUser } from '@src/utils/watchHistory/database'
 import { DELETION_REMINDER_DAYS, daysAfter, scheduledDeletionDate } from '@src/utils/deletionSchedule'
+import { confirmsDeletion, deletionConfirmationFor } from '@src/utils/deletionConfirmation'
 import { createLogger } from '@src/lib/logger'
 
 const log = createLogger('AccountDeletion')
@@ -833,11 +834,12 @@ export class AccountDeletionIncomplete extends Error {
   }
 }
 
-const sameEmail = (typed, email) =>
-  typeof typed === 'string' &&
-  typeof email === 'string' &&
-  email.trim() !== '' &&
-  typed.trim().toLowerCase() === email.trim().toLowerCase()
+/** Why a confirmation was refused, by what the account is confirmed with. */
+const CONFIRMATION_MISMATCH = {
+  email: 'The email typed is not this account’s email.',
+  name: 'The name typed is not this account’s name.',
+  id: 'The id typed is not this account’s id.',
+}
 
 /**
  * Delete an account that did not ask to be deleted, on an admin's decision
@@ -848,16 +850,20 @@ const sameEmail = (typed, email) =>
  *
  * Refused with an AccountDeletionRefusal, before anything is written: an id
  * that isn't one, an account that doesn't exist, the admin's own account, an
- * admin's account, and a confirmation that is not the account's email.
+ * admin's account, and a confirmation that is not the account's.
+ *
+ * The confirmation is the account's email, or, for an account that has none
+ * (an old sign-in whose provider gave no address), its name, or failing that
+ * its id: src/utils/deletionConfirmation.js, the rule the dialog uses too.
  *
  * @param {Object} options
  * @param {string} options.userId - The account to delete
  * @param {string} options.adminId - The admin deleting it: the signed-in admin, never the request's word for it
- * @param {string} options.confirmEmail - The account's email, as the admin typed it
+ * @param {string} options.confirmation - What the admin typed to confirm
  * @param {string|null} [options.reason] - Why, for the record
  * @returns {Promise<{ requestId: string, deletionResults: Object }>}
  */
-export async function deleteAccountAsAdmin({ userId, adminId, confirmEmail, reason = null }) {
+export async function deleteAccountAsAdmin({ userId, adminId, confirmation, reason = null }) {
   const targetId = toObjectIdOrNull(userId)
   if (!targetId) {
     throw new AccountDeletionRefusal('INVALID_USER_ID', 'A valid user id is required.')
@@ -870,15 +876,16 @@ export async function deleteAccountAsAdmin({ userId, adminId, confirmEmail, reas
     throw new AccountDeletionRefusal('OWN_ACCOUNT', 'You can’t delete your own account here.')
   }
 
-  const user = await userQueries.findById(targetId, { email: 1, role: 1 })
+  const user = await userQueries.findById(targetId, { email: 1, name: 1, role: 1 })
   if (!user) {
     throw new AccountDeletionRefusal('USER_NOT_FOUND', 'No account has that id.')
   }
   if (isAdminUser(user)) {
     throw new AccountDeletionRefusal('TARGET_IS_ADMIN', 'An admin’s account can’t be deleted here.')
   }
-  if (!sameEmail(confirmEmail, user.email)) {
-    throw new AccountDeletionRefusal('EMAIL_MISMATCH', 'The email typed is not this account’s email.')
+  const confirmedBy = deletionConfirmationFor(user)
+  if (!confirmsDeletion(confirmation, user)) {
+    throw new AccountDeletionRefusal('CONFIRMATION_MISMATCH', CONFIRMATION_MISMATCH[confirmedBy.kind])
   }
 
   const client = await clientPromise
@@ -886,7 +893,11 @@ export async function deleteAccountAsAdmin({ userId, adminId, confirmEmail, reas
   const deletionRequest = {
     _id: new ObjectId(),
     userId: targetId,
-    email: user.email,
+    // The record names the account by what it was confirmed with: its email,
+    // or the name of an account that has none (null for one with neither:
+    // the user id above is then all there is)
+    email: confirmedBy.kind === 'email' ? confirmedBy.value : null,
+    ...(confirmedBy.kind === 'name' ? { accountName: confirmedBy.value } : {}),
     requestType: 'admin',
     status: 'pending',
     reason,

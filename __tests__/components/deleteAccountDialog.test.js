@@ -6,7 +6,7 @@
  * The button that deletes stays off until the account's email has been typed.
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import DeleteAccountDialog, { confirmsEmail } from '@src/components/Admin/Users/DeleteAccountDialog'
+import DeleteAccountDialog from '@src/components/Admin/Users/DeleteAccountDialog'
 import UserListRecords from '@src/components/Admin/Users/UserListRecords'
 import { canDeleteAccount } from '@src/lib/roles/rules'
 
@@ -20,6 +20,9 @@ const ADA = { id: '507f1f77bcf86cd799439011', name: 'Ada', email: 'Ada.Lovelace@
 const GRACE = { id: '507f1f77bcf86cd799439022', name: 'Grace', email: 'grace@example.invalid', approved: 'true', roles: [], role: 'user' }
 const ADMIN = { id: '507f1f77bcf86cd7994390ad', name: 'Root', email: 'root@example.invalid', approved: 'true', roles: [], role: 'admin' }
 const OTHER_ADMIN = { id: '507f1f77bcf86cd7994390ae', name: 'Wheel', email: 'wheel@example.invalid', approved: 'true', roles: [], role: 'admin' }
+// Old sign-ins whose provider gave no address: one with a name, one with nothing
+const LINUS = { id: '507f1f77bcf86cd799439033', name: 'Linus Old-Account', email: '', approved: 'true', roles: [], role: 'user' }
+const NOBODY = { id: '507f1f77bcf86cd799439044', name: '', email: '', approved: 'false', roles: [], role: 'user' }
 
 const URL_DELETE = '/api/authenticated/admin/delete-account'
 
@@ -56,25 +59,6 @@ beforeAll(() => {
 })
 
 beforeEach(() => jest.clearAllMocks())
-
-describe('confirmsEmail', () => {
-  test('only the account’s own email confirms, whatever its case or the spaces around it', () => {
-    expect(confirmsEmail('Ada.Lovelace@example.invalid', ADA.email)).toBe(true)
-    expect(confirmsEmail('  ada.lovelace@EXAMPLE.invalid ', ADA.email)).toBe(true)
-
-    expect(confirmsEmail('', ADA.email)).toBe(false)
-    expect(confirmsEmail('ada.lovelace@example.invali', ADA.email)).toBe(false)
-    expect(confirmsEmail('ada.lovelace@example.invalid.', ADA.email)).toBe(false)
-    expect(confirmsEmail(GRACE.email, ADA.email)).toBe(false)
-    expect(confirmsEmail(undefined, ADA.email)).toBe(false)
-  })
-
-  test('an account with no email can never be confirmed', () => {
-    expect(confirmsEmail('', '')).toBe(false)
-    expect(confirmsEmail('', undefined)).toBe(false)
-    expect(confirmsEmail('undefined', undefined)).toBe(false)
-  })
-})
 
 describe('canDeleteAccount', () => {
   test('anyone but the viewer and admins', () => {
@@ -156,7 +140,7 @@ describe('the dialog', () => {
     expect(url).toBe(URL_DELETE)
     expect(options.method).toBe('POST')
     expect(options.headers).toEqual({ 'Content-Type': 'application/json' })
-    expect(JSON.parse(options.body)).toEqual({ userId: ADA.id, email: 'ada.lovelace@example.invalid', reason: 'left the household' })
+    expect(JSON.parse(options.body)).toEqual({ userId: ADA.id, confirmation: 'ada.lovelace@example.invalid', reason: 'left the household' })
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
     expect(onDeleted).toHaveBeenCalledTimes(1)
     expect(toast.success).toHaveBeenCalledWith('Deleted Ada’s account.')
@@ -218,18 +202,64 @@ describe('the dialog', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  test('a request that never reached the server says nothing was deleted', async () => {
+  test('a request with no answer does not claim either way, and points at where to look', async () => {
+    // The request may never have left, or the deletion ran and its answer was
+    // lost on the way back: the dialog cannot know, and used to say "Nothing
+    // was deleted"
     global.fetch = jest.fn(async () => {
       throw new TypeError('Failed to fetch')
     })
-    const { onClose } = open()
+    const { onClose, onDeleted } = open()
     type(ADA.email)
 
     await click(deleteButton())
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Nothing was deleted')
-    expect(toast.error).toHaveBeenCalled()
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('No answer came back from the server, so it isn’t known whether the account was deleted.')
+    expect(alert).not.toHaveTextContent(/Nothing was deleted/)
+    expect(within(alert).getByRole('link', { name: 'Open Deletion Requests' })).toHaveAttribute('href', '/admin/deletion-requests')
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.success).not.toHaveBeenCalled()
+    // The list is read again: it shows whether the account is still there
+    expect(onDeleted).toHaveBeenCalledTimes(1)
     expect(onClose).not.toHaveBeenCalled()
+    expect(deleteButton()).toBeEnabled()
+  })
+
+  test('a deletion that worked is reported as one even when the list cannot be read again afterwards', async () => {
+    // The refresh failing was once reported as "The request didn’t reach the
+    // server. Nothing was deleted", of an account that was already gone
+    fakeFetch(200, { success: true, data: { requestId: 'r1', deletionResults: {} } })
+    const onDeleted = jest.fn(async () => {
+      throw new Error('401')
+    })
+    const { onClose } = open({ onDeleted })
+    type(ADA.email)
+
+    await click(deleteButton())
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    expect(toast.success).toHaveBeenCalledWith('Deleted Ada’s account.')
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.error.mock.calls[0][0]).toMatch(/^The account was deleted, but the list could not be read again\./)
+    expect(screen.queryByText(/Nothing was deleted|isn’t known/)).not.toBeInTheDocument()
+  })
+
+  test('a deletion that stopped is still reported as that when the list cannot be read again', async () => {
+    fakeFetch(500, { success: false, error: 'DELETION_INCOMPLETE', message: 'The deletion did not finish. Run it again from Deletion Requests.', requestId: 'r1' })
+    const onDeleted = jest.fn(async () => {
+      throw new Error('401')
+    })
+    const { onClose } = open({ onDeleted })
+    type(ADA.email)
+
+    await click(deleteButton())
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('The deletion did not finish.')
+    expect(alert).not.toHaveTextContent(/No answer|Nothing was deleted/)
+    expect(onClose).not.toHaveBeenCalled()
+    await waitFor(() => expect(deleteButton()).toBeEnabled())
   })
 
   test('Escape closes it when nothing is on its way', async () => {
@@ -252,6 +282,97 @@ describe('the dialog', () => {
 
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(global.fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('the dialog, for an account with no email address', () => {
+  // The Users page showed such an account with a blank email, and the dialog
+  // asked for an email nobody could type: its button never came on.
+  const open = (user) => {
+    const onClose = jest.fn()
+    render(<DeleteAccountDialog user={user} onClose={onClose} onDeleted={jest.fn()} />)
+    return { onClose }
+  }
+  const box = (label) => screen.getByLabelText(label)
+
+  test('asks for the account’s name, shows it, and comes on only when it is typed', async () => {
+    fakeFetch(200, { success: true, data: { requestId: 'r1', deletionResults: {} } })
+    const { onClose } = open(LINUS)
+
+    expect(screen.getByRole('dialog', { name: 'Delete Linus Old-Account’s account?' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Type the account’s email to confirm')).not.toBeInTheDocument()
+    const nameBox = box('This account has no email address. Type its name to confirm')
+    expect(nameBox).toHaveAccessibleDescription('Linus Old-Account')
+    expect(nameBox).toHaveAttribute('type', 'text')
+    // What its record will name it by
+    expect(screen.getByText(/with the account’s name and your name/)).toBeInTheDocument()
+
+    expect(deleteButton()).toBeDisabled()
+    fireEvent.change(nameBox, { target: { value: 'Linus' } })
+    expect(deleteButton()).toBeDisabled()
+    fireEvent.change(nameBox, { target: { value: ' linus old-account ' } })
+    expect(deleteButton()).toBeEnabled()
+
+    await click(deleteButton())
+
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ userId: LINUS.id, confirmation: 'linus old-account', reason: null })
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    expect(toast.success).toHaveBeenCalledWith('Deleted Linus Old-Account’s account.')
+  })
+
+  test('with no name either, asks for the id shown, and never says "undefined"', async () => {
+    fakeFetch(200, { success: true, data: { requestId: 'r2', deletionResults: {} } })
+    open(NOBODY)
+
+    const dialog = screen.getByRole('dialog', { name: 'Delete this account?' })
+    expect(dialog).not.toHaveTextContent(/undefined|null|’s account\?/)
+    const idBox = box('This account has no email address and no name. Type its id to confirm')
+    expect(idBox).toHaveAccessibleDescription(NOBODY.id)
+    expect(screen.getByText(/with the account’s id and your name/)).toBeInTheDocument()
+
+    expect(deleteButton()).toBeDisabled()
+    fireEvent.change(idBox, { target: { value: LINUS.id } })
+    expect(deleteButton()).toBeDisabled()
+    fireEvent.change(idBox, { target: { value: NOBODY.id } })
+    expect(deleteButton()).toBeEnabled()
+
+    await click(deleteButton())
+
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toMatchObject({ userId: NOBODY.id, confirmation: NOBODY.id })
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Deleted the account.'))
+  })
+
+  test('an account that has an email is still asked for the email, and its name does not confirm it', () => {
+    open(ADA)
+
+    type('Ada')
+    expect(deleteButton()).toBeDisabled()
+    type(ADA.id)
+    expect(deleteButton()).toBeDisabled()
+    expect(screen.getByText(/with the account’s email and your name/)).toBeInTheDocument()
+  })
+})
+
+describe('the Users list, with an account that has no email address', () => {
+  test('says so in the email column and still offers the delete, which opens the dialog for that account', async () => {
+    render(
+      <UserListRecords
+        title="Users"
+        subtitle="Overview of all users"
+        data={[ADMIN, ADA, LINUS]}
+        updateProcessedData={jest.fn()}
+        roleOptions={[]}
+        viewerId={ADMIN.id}
+      />
+    )
+
+    const row = screen.getByText('No email address').closest('tr')
+    expect(within(row).getByText('Linus Old-Account')).toBeInTheDocument()
+
+    await click(within(row).getByRole('button', { name: 'Delete account' }))
+
+    expect(screen.getByRole('dialog', { name: 'Delete Linus Old-Account’s account?' })).toBeInTheDocument()
+    expect(screen.getByLabelText('This account has no email address. Type its name to confirm')).toBeInTheDocument()
   })
 })
 
@@ -293,7 +414,7 @@ describe('the Users list', () => {
     type(GRACE.email)
     await click(deleteButton())
 
-    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toMatchObject({ userId: GRACE.id, email: GRACE.email })
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toMatchObject({ userId: GRACE.id, confirmation: GRACE.email })
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(updateProcessedData).toHaveBeenCalledTimes(1)
   })

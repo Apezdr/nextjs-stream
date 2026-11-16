@@ -2,11 +2,12 @@
 // An admin deletes an account that did not ask to be deleted (the Users page's
 // "Delete account").
 //
-//   POST { userId, email, reason? }   { success: true, data: { requestId, deletionResults } }
+//   POST { userId, confirmation, reason? }   { success: true, data: { requestId, deletionResults } }
 //
-// `email` is the account's email as the admin typed it into the confirmation:
-// checked here again, so a row that moved under the admin's cursor cannot
-// delete someone else.
+// `confirmation` is what the admin typed into the dialog: the account's
+// email, or the name (failing that the id) of an account that has no email
+// (src/utils/deletionConfirmation.js). Checked here again, so a row that
+// moved under the admin's cursor cannot delete someone else.
 //
 // One pipeline with the deletions users ask for (accountDeletion.js): the
 // deletion is recorded as a request of type 'admin' and run at once, so the
@@ -22,7 +23,7 @@
 //   "your own account" is theirs
 // - a missing or malformed user id (400), an account that doesn't exist (404)
 // - the admin's own account, and any admin's account (403)
-// - an email that is not the account's (400)
+// - a confirmation that is not the account's (400)
 import { adminGate } from '@src/lib/roles/gates'
 import { getSession } from '@src/lib/cachedAuth'
 import { isImpersonating } from '@src/lib/roles/rules'
@@ -35,7 +36,7 @@ const MAX_REASON_LENGTH = 500
 
 const REFUSAL_STATUS: Record<string, number> = {
   INVALID_USER_ID: 400,
-  EMAIL_MISMATCH: 400,
+  CONFIRMATION_MISMATCH: 400,
   USER_NOT_FOUND: 404,
   OWN_ACCOUNT: 403,
   TARGET_IS_ADMIN: 403,
@@ -54,18 +55,18 @@ export async function POST(request: Request) {
 
   // JSON only: a cross-site form can't send it without the browser asking first
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
-    return refuse(415, 'JSON_REQUIRED', 'Send { "userId", "email" } as JSON.')
+    return refuse(415, 'JSON_REQUIRED', 'Send { "userId", "confirmation" } as JSON.')
   }
   const body = await request.json().catch(() => null)
   const userId = body?.userId
-  const email = body?.email
+  const confirmation = body?.confirmation
   const reason = body?.reason ?? null
 
   if (typeof userId !== 'string' || userId.trim() === '') {
     return refuse(400, 'INVALID_USER_ID', 'A valid user id is required.')
   }
-  if (typeof email !== 'string' || email.trim() === '') {
-    return refuse(400, 'EMAIL_REQUIRED', 'Type the account’s email to confirm.')
+  if (typeof confirmation !== 'string' || confirmation.trim() === '') {
+    return refuse(400, 'CONFIRMATION_REQUIRED', 'Type the confirmation the dialog asks for.')
   }
   if (reason !== null && (typeof reason !== 'string' || reason.length > MAX_REASON_LENGTH)) {
     return refuse(400, 'INVALID_REASON', `A reason is text of at most ${MAX_REASON_LENGTH} characters.`)
@@ -76,10 +77,10 @@ export async function POST(request: Request) {
     const { requestId, deletionResults } = await deleteAccountAsAdmin({
       userId,
       adminId,
-      confirmEmail: email,
+      confirmation,
       reason: reason?.trim() || null,
     })
-    // Ids only, never the email
+    // Ids only, never the email or the name
     log.info({ adminId, userId, requestId }, 'An admin deleted an account')
     return Response.json({ success: true, data: { requestId, deletionResults } })
   } catch (error) {
