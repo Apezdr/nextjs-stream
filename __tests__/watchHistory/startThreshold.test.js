@@ -218,6 +218,37 @@ describe('the start threshold', () => {
     expect(upserts).toHaveLength(0)
     expect(history).toBeNull()
   })
+
+  it('mark, no row, 5 s (a title shorter than the threshold, marked watched): row created', async () => {
+    const res = await post({ playbackTime: 5, kind: 'mark', isPaused: true })
+
+    expect(history.playbackTime).toBe(5)
+    expect(await res.json()).toMatchObject({ kind: 'mark', outcome: 'created', savedAt: history.lastUpdated.toISOString() })
+    expect(invalidate).toHaveBeenCalledWith(USER_ID)
+    expect(writeLog()).toMatchObject({ playbackTime: 5, kind: 'mark', outcome: 'created' })
+  })
+
+  it('mark, no row, 0 s: row created at the position stated', async () => {
+    await post({ playbackTime: 0, kind: 'mark', isPaused: true })
+
+    expect(history.playbackTime).toBe(0)
+    expect(writeLog().outcome).toBe('created')
+  })
+
+  it('mark, row at 1,240 s, 5 s: row updated', async () => {
+    seedRow(1240)
+    await post({ playbackTime: 5, kind: 'mark', isPaused: true })
+
+    expect(history.playbackTime).toBe(5)
+    expect(writeLog().outcome).toBe('updated')
+  })
+
+  it('the same position from a player is still held: the exemption is the kind’s, not the position’s', async () => {
+    for (const kind of ['progress', 'seek', 'final']) {
+      await post({ playbackTime: 5, kind, isPaused: true })
+      expect([kind, history]).toEqual([kind, null])
+    }
+  })
 })
 
 describe('the answer says what the write did, and when', () => {

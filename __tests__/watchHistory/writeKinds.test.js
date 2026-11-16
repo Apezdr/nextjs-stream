@@ -115,7 +115,7 @@ jest.mock('@src/utils/cache/invalidation', () => ({
 const { ObjectId } = require('mongodb')
 const { upsertPlayback } = require('@src/utils/watchHistory/database')
 const { extractPlaybackMetadata, buildPlaybackMetadata } = require('@src/utils/watchHistory/metadata')
-const { normalizePlaybackKind, kindWritesPosition } = require('@src/utils/watchHistory/writeKinds')
+const { PLAYBACK_WRITE_KINDS, normalizePlaybackKind, kindWritesPosition, kindStatesPosition } = require('@src/utils/watchHistory/writeKinds')
 const { upsertPresenceHeartbeat, isRepeatPausedPing } = require('@src/utils/playbackPresence/database')
 const { POST } = require('../../src/app/api/authenticated/sync/updatePlayback/route')
 
@@ -146,6 +146,12 @@ describe('write kinds', () => {
     expect(normalizePlaybackKind('heartbeat')).toBeNull()
     expect(kindWritesPosition('keepalive')).toBe(false)
     expect(kindWritesPosition('final')).toBe(true)
+  })
+
+  it('mark is a kind: it writes a position, and is the only one that states it', () => {
+    expect(normalizePlaybackKind('mark')).toBe('mark')
+    expect(kindWritesPosition('mark')).toBe(true)
+    expect(PLAYBACK_WRITE_KINDS.filter(kindStatesPosition)).toEqual(['mark'])
   })
 })
 
@@ -281,5 +287,52 @@ describe('POST /api/authenticated/sync/updatePlayback', () => {
     await post({ videoId: VIDEO, playbackTime: 900, kind: 'final', isPaused: true, mediaMetadata: TV_META })
     expect(history.playbackTime).toBe(900)
     expect(presence).toBeNull()
+  })
+})
+
+describe('a mark: the viewer’s statement, not a player’s report', () => {
+  it('writes the position and its metadata, and no presence', async () => {
+    const res = await post({ videoId: VIDEO, playbackTime: 2640, kind: 'mark', isPaused: true, mediaMetadata: TV_META })
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ kind: 'mark', outcome: 'created' })
+    expect(history).toMatchObject({ playbackTime: 2640, showId: 'show1', seasonNumber: 3, episodeNumber: 5, lastWriter: 'client' })
+    expect(presence).toBeNull()
+    expect(presenceCollection.findOneAndUpdate).not.toHaveBeenCalled()
+    expect(invalidate).toHaveBeenCalled()
+  })
+
+  it('needs a position, like every kind that writes one', async () => {
+    expect((await post({ videoId: VIDEO, kind: 'mark' })).status).toBe(400)
+    expect(history).toBeNull()
+  })
+
+  it('with a sessionId is refused (400) and writes nothing: nothing is playing it', async () => {
+    const res = await post({ videoId: VIDEO, playbackTime: 2640, kind: 'mark', sessionId: 's1' })
+
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toMatch(/mark write carries no sessionId/)
+    expect(history).toBeNull()
+    expect(presence).toBeNull()
+  })
+
+  it('as a cast mirror is refused (400) and writes nothing: no receiver is at it', async () => {
+    const res = await post({ videoId: VIDEO, playbackTime: 2640, kind: 'mark', source: 'cast-mirror' })
+
+    expect(res.status).toBe(400)
+    expect(history).toBeNull()
+  })
+
+  it('replaces a stored position from under the resume floor, which only guards against a player starting up', async () => {
+    await post({ videoId: VIDEO, playbackTime: 1240, kind: 'progress', isPaused: false, mediaMetadata: TV_META })
+
+    // A player's report under 2 s keeps the stored position…
+    await post({ videoId: VIDEO, playbackTime: 1, kind: 'progress', isPaused: false })
+    expect(history.playbackTime).toBe(1240)
+
+    // …the viewer's statement replaces it
+    const res = await post({ videoId: VIDEO, playbackTime: 1, kind: 'mark' })
+    expect((await res.json()).outcome).toBe('updated')
+    expect(history.playbackTime).toBe(1)
   })
 })

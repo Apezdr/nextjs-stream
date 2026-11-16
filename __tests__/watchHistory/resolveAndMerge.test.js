@@ -203,6 +203,16 @@ describe('quality-swap merge', () => {
     expect(rows[0].playbackTime).toBe(7456)
   })
 
+  it('a stated position (a mark) moves the sibling and is written, even under the resume floor', async () => {
+    const result = await upsertPlayback({ userId: USER, videoId: newRaw, playbackTime: 0.8, metadata: {}, stated: true })
+
+    expect(result.outcome).toBe('updated')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]._id).toBe('old')
+    expect(rows[0].normalizedVideoId).toBe(newNid)
+    expect(rows[0].playbackTime).toBe(0.8)
+  })
+
   it('a write under the start threshold still moves the sibling — the title has a row', async () => {
     const result = await upsertPlayback({ userId: USER, videoId: newRaw, playbackTime: 4.1, metadata: {} })
 

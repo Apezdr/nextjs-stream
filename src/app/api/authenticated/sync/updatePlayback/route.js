@@ -2,7 +2,7 @@ import { ObjectId } from 'mongodb'
 import { approvedGate } from '@src/lib/roles/gates'
 import { upsertPlayback, upsertPlaybackFromCast } from '@src/utils/watchHistory/database'
 import { extractPlaybackMetadata } from '@src/utils/watchHistory/metadata'
-import { normalizePlaybackKind, kindWritesPosition } from '@src/utils/watchHistory/writeKinds'
+import { normalizePlaybackKind, kindWritesPosition, kindStatesPosition } from '@src/utils/watchHistory/writeKinds'
 import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
 import { createPlaybackDeviceInfo } from '@src/utils/deviceDetection'
 import { getClientIP } from '@src/utils/rateLimiter'
@@ -56,6 +56,16 @@ export const POST = async (req) => {
     if (!videoId || (kindWritesPosition(kind) && !hasPosition)) {
       return new Response(
         JSON.stringify({ error: 'Missing or invalid videoId or playbackTime' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // A mark is the viewer's statement, not a player's report (writeKinds.js):
+    // no session is playing it, and no receiver is at it. One that says
+    // otherwise contradicts itself, and is refused rather than half-applied.
+    if (kindStatesPosition(kind) && (sessionId || source === 'cast-mirror')) {
+      return new Response(
+        JSON.stringify({ error: `A ${kind} write carries no sessionId and no cast-mirror source` }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       )
     }
@@ -139,6 +149,9 @@ export const POST = async (req) => {
         ipAddress,
         localIp: reportedLocalIp,
         isPaused: isPaused === true,
+        // A mark creates or updates at any position: the start threshold and
+        // the resume floor are rules about players
+        stated: kindStatesPosition(effectiveKind),
       })
 
       // One line per write, after it, so it can say what the write did:

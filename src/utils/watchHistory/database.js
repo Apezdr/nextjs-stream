@@ -85,11 +85,12 @@ function isMediaIdUniqueViolation(error) {
  * device history survive, and the resume floor still applies — a position
  * under 2 s (a player booting on the new file) never replaces the old
  * resume point. Pre-backfill duplicates (several rows, one identity) collapse
- * to the newest.
+ * to the newest. A stated position (`stated`, a `mark` write) is no player
+ * booting, so the floor does not hold it back here either.
  *
  * @returns {Promise<Object|null>} the update result, or null when no sibling existed
  */
-async function rekeySiblingAndApply(collection, { userIdObj, mediaId, normalizedVideoId, update }) {
+async function rekeySiblingAndApply(collection, { userIdObj, mediaId, normalizedVideoId, update, stated = false }) {
   const siblings = await collection
     .find({ userId: userIdObj, mediaId, normalizedVideoId: { $ne: normalizedVideoId } })
     .sort({ lastUpdated: -1 })
@@ -103,6 +104,7 @@ async function rekeySiblingAndApply(collection, { userIdObj, mediaId, normalized
 
   const $set = { ...(update.$set || {}), normalizedVideoId }
   if (
+    !stated &&
     Number.isFinite($set.playbackTime) &&
     $set.playbackTime < MIN_PERSISTED_POSITION_S &&
     (keep.playbackTime ?? 0) >= MIN_PERSISTED_POSITION_S
@@ -124,6 +126,10 @@ async function rekeySiblingAndApply(collection, { userIdObj, mediaId, normalized
  * @param {Object} options.deviceInfo - Device information from User-Agent
  * @param {string} [options.ipAddress] - Server-observed client IP (proxy-aware)
  * @param {string} [options.localIp] - Optional device-reported local/LAN IP
+ * @param {boolean} [options.stated] - The viewer stated this position (a
+ *   `mark` write, see writeKinds.js); no player reported it. The resume floor
+ *   and the start threshold guard against a player starting up, so neither
+ *   applies: the write creates a row at any position and replaces a stored one
  * @returns {Promise<Object>} the update result, plus `outcome`: 'created' |
  *   'updated' | 'held' (under WATCH_START_THRESHOLD_S with no row to update),
  *   and `savedAt`: the `lastUpdated` this write gave the row (the server's
@@ -137,7 +143,8 @@ export async function upsertPlayback({
   deviceInfo = null,
   ipAddress = null,
   localIp = null,
-  isPaused = false
+  isPaused = false,
+  stated = false
 }) {
   try {
     const client = await clientPromise
@@ -199,8 +206,10 @@ export async function upsertPlayback({
     // field from the write: two racing sub-threshold beats both keep the
     // stored position, and a real position landing in between is not
     // overwritten by either.
+    //
+    // A stated position (`stated`) is no player starting up: it is written.
     let update = updateDoc
-    if (playbackTime < MIN_PERSISTED_POSITION_S) {
+    if (!stated && playbackTime < MIN_PERSISTED_POSITION_S) {
       const existing = await collection.findOne(filter, { projection: { playbackTime: 1 } })
       if (existing && (existing.playbackTime ?? 0) >= MIN_PERSISTED_POSITION_S) {
         const { playbackTime: _startingUp, ...keepPosition } = updateDoc.$set
@@ -219,7 +228,7 @@ export async function upsertPlayback({
 
     let result
     let outcome
-    if (playbackTime < WATCH_START_THRESHOLD_S) {
+    if (!stated && playbackTime < WATCH_START_THRESHOLD_S) {
       // Apply the start threshold (see WATCH_START_THRESHOLD_S): update only.
       // upsert: false is the whole rule, and it holds under races — a row
       // created a moment ago is updated, a missing one is never inserted. A
@@ -253,6 +262,7 @@ export async function upsertPlayback({
               mediaId: resolved.mediaId,
               normalizedVideoId,
               update,
+              stated,
             })) ?? (await collection.updateOne(filter, update, { upsert: true }))
         } else {
           throw error
