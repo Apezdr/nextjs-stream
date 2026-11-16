@@ -26,6 +26,7 @@ import { isRedisConfigured } from './redisClient'
 import { authSecondaryStorage } from './authSessionStore'
 import { auditViewAs, VIEW_AS_START_PATH, VIEW_AS_STOP_PATH } from './viewAsAudit'
 import { holdViewAsExpiry } from './viewAsSession'
+import { DISABLED_AUTH_PATHS } from './authDisabledPaths'
 
 const adminEmails = adminEmailsFromEnv()
 const roleLog = createLogger('Auth.AdminRoles')
@@ -46,6 +47,9 @@ export const auth = betterAuth({
 
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,
+
+  // Endpoints better-auth would serve that this app answers 404 for (authDisabledPaths.ts)
+  disabledPaths: [...DISABLED_AUTH_PATHS],
 
   advanced: {
     database: {
