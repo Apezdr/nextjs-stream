@@ -2,7 +2,7 @@
 
 import './player.css'
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Player, Container, GoogleCast } from './videojs'
 import PlayerMedia, { castContentType, isManifestSource } from './PlayerMedia'
 import { VideoLayout } from './VideoLayout'
@@ -28,6 +28,7 @@ import CastVolume from './CastVolume'
 import usePlayWhenReady from './usePlayWhenReady'
 import useResumePosition from './useResumePosition'
 import { parseExplicitStart } from './resumePosition'
+import { PlayerFrameSkeleton } from './PlayerPageSkeleton'
 
 /**
  * Client root for the main watch-page player.
@@ -48,20 +49,28 @@ import { parseExplicitStart } from './resumePosition'
  * so the shell, scroll position and surrounding state are still instant.
  */
 export default function MainVideoPlayer(props) {
-  // Once the page has been hidden, every later show is a RE-SHOW: the server
-  // props below are frozen from the original render and the watch-history
-  // row may have moved on another device since. useResumePosition re-reads
-  // the server on those mounts and nowhere else.
-  const { visible, reshown } = useActivityVisible({ withReshown: true })
+  const visible = useActivityVisible()
+
+  // Where this page's player last was. It outlives the player (which is
+  // unmounted while the page is hidden) and nothing else: it is this page's
+  // own state, as the position would be had the player stayed mounted. A
+  // page shown again starts from it when the server gives no answer in time,
+  // because the position the page was rendered with is by then as old as the
+  // whole viewing. Never the first source: the server is asked first.
+  const lastPositionRef = useRef(null)
+  const rememberPosition = useCallback((seconds) => {
+    lastPositionRef.current = Number.isFinite(seconds) ? seconds : null
+  }, [])
+  const lastKnownPosition = useCallback(() => lastPositionRef.current, [])
 
   if (!visible) {
     return <PlayerPlaceholder />
   }
 
-  return <ActiveVideoPlayer {...props} remount={reshown} />
+  return <ActiveVideoPlayer {...props} onPosition={rememberPosition} getLastKnownPosition={lastKnownPosition} />
 }
 
-/** Holds the layout box so showing or returning to the page doesn't jump. */
+/** What stands where the player was while its page is hidden (display: none). */
 function PlayerPlaceholder() {
   return (
     <div
@@ -79,7 +88,7 @@ function PlayerPlaceholder() {
  * Chrome at readyState 2 (hlsPlaybackConfig.js).
  */
 function ActiveVideoPlayer(props) {
-  const { videoURL, start, savedPlaybackTime, mediaId, remount } = props
+  const { videoURL, start, savedPlaybackTime, mediaId, playbackUserId, getLastKnownPosition } = props
 
   // Returning to a watch page while the receiver is already playing this exact
   // title mounts a fresh, DISCONNECTED cast provider (its adoption path is
@@ -96,16 +105,21 @@ function ActiveVideoPlayer(props) {
   // next-episode card asks for and what a finished episode needs.
   const explicitStart = parseExplicitStart(start)
 
+  // Every mount asks the server where to start (unless the link said, or a
+  // receiver has the title): the first as well as a page shown again.
   const { ready, resumeAt } = useResumePosition({
-    remount,
     explicitStart,
     savedPlaybackTime,
     mediaId,
     videoURL,
     castingThisTitle,
+    userId: playbackUserId,
+    getLastKnownPosition,
   })
 
-  if (!ready) return <PlayerPlaceholder />
+  // The player's box, black, while it asks: the frame the page's skeleton
+  // showed, so nothing flashes between the two.
+  if (!ready) return <PlayerFrameSkeleton />
 
   return (
     <ActivePlayerBody
@@ -152,6 +166,7 @@ function ActivePlayerBody({
   castReceiverId,
   castToken,
   playbackUserId,
+  onPosition,
   isAdmin,
   adminProps,
 }) {
@@ -175,8 +190,8 @@ function ActivePlayerBody({
   usePlayWhenReady(videoRef)
 
   // Where playback begins was resolved by ActiveVideoPlayer before this body
-  // mounted (deep link > server watch history > localStorage, re-read from
-  // the server on an Activity re-show). For a manifest source it is handed to
+  // mounted (a deep link, else the server's row, asked for on every mount).
+  // For a manifest source it is handed to
   // hls.js as startPosition and the tracker is told the engine owns the
   // initial seek, so it never cold-seeks the element itself — that seek is
   // what left Chrome holding readyState 2 for 14-24 s (hlsPlaybackConfig.js).
@@ -287,6 +302,7 @@ function ActivePlayerBody({
               mediaMetadata={playbackMetadata}
               castAdopted={castingThisTitle}
               userId={playbackUserId}
+              onPosition={onPosition}
             />
           ) : null}
           {clipStartTime || clipEndTime ? (

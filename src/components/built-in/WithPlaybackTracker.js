@@ -68,7 +68,12 @@ export default function WithPlayBackTracker({
   // The user this page was rendered for. Every write names them, and the
   // server refuses one whose session is someone else's by the time it goes:
   // a "View as" Stop, or a sign-in in another tab (src/lib/playbackUser.ts).
-  userId = null
+  userId = null,
+  // Told each position this mount reaches (null when a receiver takes the
+  // title over): the page keeps the last one for as long as it lives, to
+  // start from if it is shown again and the server cannot be asked
+  // (MainVideoPlayer).
+  onPosition = null
 }) {
   const store = Player.usePlayer();
   // Not the store's `canPlay` (readyState 4, sampled on four events). Against
@@ -88,7 +93,7 @@ export default function WithPlayBackTracker({
   // the resume seek reports the player booting, not a viewing position.
   const hasAppliedStartRef = useRef(false);
   const localIpRef = useRef(null);
-  const latestRef = useRef({ store: null, videoURL: null, mediaMetadata: null, castAdopted: false, userId: null, mediaId: null, normalizedVideoId: null });
+  const latestRef = useRef({ store: null, videoURL: null, mediaMetadata: null, castAdopted: false, userId: null, mediaId: null, normalizedVideoId: null, onPosition: null });
   const sessionIdRef = useRef(null);
   if (sessionIdRef.current === null) {
     sessionIdRef.current = generateSessionId();
@@ -102,8 +107,9 @@ export default function WithPlayBackTracker({
   // at once on pause, unpause and seek). Display only: nothing resumes from
   // it, and nothing is written to browser storage.
   const reportLive = (playbackTime) => {
-    const { userId: user, mediaId: mid, normalizedVideoId: nid } = latestRef.current;
+    const { userId: user, mediaId: mid, normalizedVideoId: nid, onPosition: remember } = latestRef.current;
     liveRef.current = { playbackTime };
+    remember?.(playbackTime);
     playbackStore.reportPosition({
       userId: user,
       mediaId: mid,
@@ -388,7 +394,7 @@ export default function WithPlayBackTracker({
   // Latest values for the unload path below, which is bound once per mount,
   // and for what this mount tells the positions store.
   useEffect(() => {
-    latestRef.current = { store, videoURL, mediaMetadata, castAdopted, userId, mediaId, normalizedVideoId };
+    latestRef.current = { store, videoURL, mediaMetadata, castAdopted, userId, mediaId, normalizedVideoId, onPosition };
   });
 
   // Once a receiver adopts this title, the television is the viewing session
@@ -401,8 +407,10 @@ export default function WithPlayBackTracker({
     const sessionId = sessionIdRef.current;
     sessionIdRef.current = generateSessionId();
     // Nor is this tab what plays the title any more: the cast's own session
-    // is what the progress surfaces follow from here
+    // is what the progress surfaces follow from here, and the position this
+    // page remembered is not where the television will be
     endLive(null, sessionId);
+    latestRef.current.onPosition?.(null);
     try {
       fetch(PRESENCE_END_URL, {
         method: 'POST',
@@ -489,6 +497,7 @@ export default function WithPlayBackTracker({
     const leave = () => {
       const finalTime = flushFinal();
       endPresence();
+      if (finalTime !== null) latestRef.current.onPosition?.(finalTime);
       endLive(finalTime);
     };
 

@@ -19,10 +19,22 @@ export default function PlayerPageSkeleton() {
       aria-label="Loading player"
       className="flex flex-col items-center justify-center min-h-dvh"
     >
-      <div className="relative z-10 flex aspect-[16/9] max-h-dvh w-full items-center justify-center bg-black">
-        <span className="size-10 rounded-full border-2 border-white/20 border-t-white/70 motion-safe:animate-spin" />
-        <span className="sr-only">Loading player…</span>
-      </div>
+      <PlayerFrameSkeleton />
+    </div>
+  )
+}
+
+/**
+ * The black frame alone: the player's box with nothing in it yet. The player
+ * shows it in its own place while it asks the server where to start
+ * (MainVideoPlayer), so the page's skeleton hands over to the same frame and
+ * nothing flashes or jumps in between.
+ */
+export function PlayerFrameSkeleton() {
+  return (
+    <div className="relative z-10 flex aspect-[16/9] max-h-dvh w-full items-center justify-center bg-black">
+      <span className="size-10 rounded-full border-2 border-white/20 border-t-white/70 motion-safe:animate-spin" />
+      <span className="sr-only">Loading player…</span>
     </div>
   )
 }

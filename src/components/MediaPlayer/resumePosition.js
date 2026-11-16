@@ -1,23 +1,29 @@
 /**
- * Where playback begins on the web watch page — one resolution per mount.
+ * Where playback begins on the web watch page: one resolution per mount.
  *
- * Pure helpers (no React) so the priority order is testable on its own:
+ * Pure helpers (no React) so the order is testable on its own:
  *
- *   1. an explicit `?start=` deep link, INCLUDING `?start=0` — a present zero
+ *   1. an explicit `?start=` deep link, INCLUDING `?start=0`: a present zero
  *      is a request to restart, not an absent value (the next-episode card
  *      links with it, and a finished episode must not reopen in its credits)
- *   2. the server's watch history, which the page rendered with — unless
- *      this is a Next Activity RE-SHOW, when that value is frozen from the
- *      original render and the row may have moved on another device since
- *   3. this browser's localStorage, as written by the tracker every second
+ *   2. the server's row, asked for as the player mounts
+ *      (GET /api/authenticated/sync/playback): a finished title starts over,
+ *      a row gives its position, no row means the top
+ *   3. when the server gives no answer in time (slow, failed, refused): what
+ *      this page last knew. That is the position its own player last reached
+ *      when the page has played before (a page shown again), else the
+ *      position the page was rendered with.
  *
- * On a re-show the fresh server row is fetched and compared with
- * localStorage by timestamp; the newer one wins. That is the difference
- * between "resumed where the TV left off" and "overwrote the TV's position
- * with a stale one from render time".
+ * Every mount asks, the first as well as a page shown again: the position
+ * the page was rendered with is as old as the render, and the row may have
+ * moved on another device since. Resuming at the rendered value and then
+ * saving from it is how a web tab used to overwrite a newer position.
+ *
+ * Nothing here reads the browser's storage or the positions store. The
+ * record is the server's row; the store is for drawing bars.
  */
 
-import { getPlaybackStorageKey, readWithLegacyFallback } from '@src/utils/playbackStorageKey'
+import { playbackReadHeaders } from '@src/lib/playbackUser'
 
 /**
  * @param {unknown} start - the raw `?start=` search param
@@ -29,90 +35,71 @@ export function parseExplicitStart(start) {
   return Number.isFinite(n) && n >= 0 ? n : null
 }
 
-/**
- * The tracker's localStorage entry for this title, if any.
- *
- * @returns {{ playbackTime: number, lastUpdated: number|null }|null}
- */
-export function readLocalResume({ mediaId, videoURL }) {
-  if (typeof window === 'undefined') return null
-  try {
-    const raw = readWithLegacyFallback(getPlaybackStorageKey({ mediaId, videoURL }), videoURL)
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
-    const playbackTime = parseFloat(parsed?.playbackTime)
-    if (!Number.isFinite(playbackTime) || playbackTime <= 0) return null
-    const lastUpdated = parsed?.lastUpdated ? new Date(parsed.lastUpdated).getTime() : null
-    return { playbackTime, lastUpdated: Number.isFinite(lastUpdated) ? lastUpdated : null }
-  } catch {
-    return null
-  }
-}
+const position = (value) => (Number.isFinite(value) && value > 0 ? value : null)
 
 /**
- * Pick between the server's row and this browser's localStorage entry.
- * Newer timestamp wins; a side with no timestamp loses to one that has one;
- * a completed server row means "start over".
+ * Where this mount starts, from what it was told.
  *
- * @param {{ playbackTime: number, lastUpdated: number|null, completed?: boolean }|null} server
- * @param {{ playbackTime: number, lastUpdated: number|null }|null} local
- * @returns {number} seconds
+ * @param {Object} known
+ * @param {number|null} [known.explicitStart] - from `?start=` (parseExplicitStart)
+ * @param {{ kind: 'row', playbackTime: number, completed: boolean }|{ kind: 'none' }|{ kind: 'unavailable' }|null} [known.answer] -
+ *   the server's answer (fetchServerResume)
+ * @param {number|null} [known.lastKnownPosition] - where this page's own player last was, if it has played
+ * @param {number|null} [known.savedPlaybackTime] - the position the page was rendered with
+ * @returns {number|null} seconds; 0 for a restart (an explicit one, or a finished title); null for "from the top"
  */
-export function pickResume(server, local) {
-  const serverTime = server && Number.isFinite(server.playbackTime) && server.playbackTime > 0 ? server.playbackTime : 0
-  const localTime = local && Number.isFinite(local.playbackTime) && local.playbackTime > 0 ? local.playbackTime : 0
-  if (server?.completed) return 0
-  if (!serverTime) return localTime
-  if (!localTime) return serverTime
-  const serverAt = server.lastUpdated ?? null
-  const localAt = local.lastUpdated ?? null
-  if (serverAt !== null && localAt !== null) return localAt > serverAt ? localTime : serverTime
-  if (serverAt !== null) return serverTime
-  if (localAt !== null) return localTime
-  return serverTime
-}
-
-/**
- * Resolve the position for a mount that does NOT need a network round trip:
- * the first render (server value is fresh) or an explicit deep link.
- *
- * @returns {number|null} seconds, 0 for an explicit restart, null when unknown
- */
-export function resolveInitialResume({ explicitStart, savedPlaybackTime, mediaId, videoURL }) {
+export function resolveResume({ explicitStart = null, answer = null, lastKnownPosition = null, savedPlaybackTime = null } = {}) {
   if (explicitStart !== null && explicitStart !== undefined) return explicitStart
-  if (Number.isFinite(savedPlaybackTime) && savedPlaybackTime > 0) return savedPlaybackTime
-  const local = readLocalResume({ mediaId, videoURL })
-  return local ? local.playbackTime : null
+  if (answer?.kind === 'row') return answer.completed ? 0 : position(answer.playbackTime)
+  if (answer?.kind === 'none') return null
+  // No answer. The page's own player is later knowledge than its render.
+  return position(lastKnownPosition) ?? position(savedPlaybackTime)
 }
 
+/** The answer when the server could not be asked, or did not answer in time. */
+const UNAVAILABLE = Object.freeze({ kind: 'unavailable' })
+
 /**
- * Fetch the current server row for a title. Best effort: any failure or a
- * slow answer resolves to null and the caller falls back to what it has.
+ * Ask the server where the viewer is in a title. The request names the user
+ * the page was rendered for, and the server refuses it once the browser's
+ * session is someone else's: another account's position is never played from.
  *
- * @returns {Promise<{ playbackTime: number, lastUpdated: number|null, completed?: boolean }|null>}
+ * Never rejects: a slow answer (past `timeoutMs`), a failure and a refusal
+ * all resolve to `{ kind: 'unavailable' }`, and the caller starts from what
+ * the page knew.
+ *
+ * @param {Object} title
+ * @param {string|null} title.videoURL - the URL the page plays
+ * @param {string|null} [title.mediaId] - its durable id ('mid:…'), which finds the row after a quality swap
+ * @param {string|null} title.userId - the user the page was rendered for
+ * @param {{ timeoutMs?: number, signal?: AbortSignal }} [options]
+ * @returns {Promise<{ kind: 'row', playbackTime: number, completed: boolean }|{ kind: 'none' }|{ kind: 'unavailable' }>}
  */
-export async function fetchServerResume(videoURL, { timeoutMs = 1500, signal } = {}) {
-  if (typeof fetch === 'undefined' || !videoURL) return null
+export async function fetchServerResume({ videoURL = null, mediaId = null, userId = null } = {}, { timeoutMs = 1500, signal } = {}) {
+  if (typeof fetch === 'undefined' || !videoURL) return UNAVAILABLE
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null
   const onOuterAbort = () => controller?.abort()
   signal?.addEventListener?.('abort', onOuterAbort)
   try {
-    const res = await fetch(`/api/authenticated/sync/playback?videoId=${encodeURIComponent(videoURL)}`, {
+    const params = new URLSearchParams()
+    if (typeof mediaId === 'string' && mediaId.startsWith('mid:')) params.set('mediaId', mediaId)
+    params.set('videoId', videoURL)
+    const res = await fetch(`/api/authenticated/sync/playback?${params}`, {
       cache: 'no-store',
+      headers: playbackReadHeaders(userId),
       signal: controller?.signal,
     })
-    if (!res.ok) return null
+    if (!res.ok) return UNAVAILABLE
     const body = await res.json()
-    if (!body?.found) return { playbackTime: 0, lastUpdated: null, completed: false }
-    const lastUpdated = body.lastUpdated ? new Date(body.lastUpdated).getTime() : null
+    if (!body?.found) return { kind: 'none' }
     return {
+      kind: 'row',
       playbackTime: Number(body.playbackTime) || 0,
-      lastUpdated: Number.isFinite(lastUpdated) ? lastUpdated : null,
       completed: body.completed === true,
     }
   } catch {
-    return null
+    return UNAVAILABLE
   } finally {
     if (timer) clearTimeout(timer)
     signal?.removeEventListener?.('abort', onOuterAbort)

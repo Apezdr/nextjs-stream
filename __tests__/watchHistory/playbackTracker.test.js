@@ -214,3 +214,37 @@ it('when a cast takes the title over, the tab stops being what plays it, under t
   expect(mockStore.reportEnded).toHaveBeenCalledTimes(1)
   expect(mockStore.reportEnded).toHaveBeenCalledWith(expect.objectContaining({ playbackTime: 30, sessionId }))
 })
+
+describe('what it tells the page that holds it (onPosition)', () => {
+  // The page keeps the last position for as long as it lives, to start from
+  // if it is shown again and the server cannot be asked (MainVideoPlayer)
+  it('each position it reaches, and the last one as it leaves', () => {
+    const onPosition = jest.fn()
+    const { unmount } = render(tracker({ onPosition }))
+    playTo(30)
+    playTo(31)
+    expect(onPosition.mock.calls).toEqual([[30], [31]])
+
+    mockPlayer.currentTime = 34.5
+    unmount()
+    expect(onPosition).toHaveBeenLastCalledWith(34.5)
+  })
+
+  it('nothing in the first two seconds: a restart left at once keeps what the page knew', () => {
+    const onPosition = jest.fn()
+    const { unmount } = render(tracker({ onPosition, resumeAt: 0 }))
+    playTo(1.5)
+    unmount()
+    expect(onPosition).not.toHaveBeenCalled()
+  })
+
+  it('forgets it when a cast takes the title over: the television will not be where the page was', () => {
+    const onPosition = jest.fn()
+    const { rerender } = render(tracker({ onPosition }))
+    playTo(30)
+
+    mockReady = { canSeek: false, canTrack: false }
+    rerender(tracker({ onPosition, castAdopted: true }))
+    expect(onPosition).toHaveBeenLastCalledWith(null)
+  })
+})
