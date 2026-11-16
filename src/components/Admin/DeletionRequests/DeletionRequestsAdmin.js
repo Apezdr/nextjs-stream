@@ -2,16 +2,23 @@
 
 import { useState, useEffect, useReducer } from 'react'
 import {
-  CheckCircleIcon, 
-  ClockIcon, 
+  CheckCircleIcon,
+  ClockIcon,
   ExclamationTriangleIcon,
   XCircleIcon,
   InformationCircleIcon,
   TrashIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
+import { toast } from 'react-toastify'
 import { formatDateToEST } from '@src/utils'
 
+const REQUESTS_URL = '/api/authenticated/admin/deletion-requests'
+
+// The route's page size limit: the newest requests, which is what an admin acts on
+const PAGE_SIZE = 100
+
+// The statuses a request moves through (src/utils/accountDeletion.js)
 const statusConfig = {
   pending: {
     icon: ClockIcon,
@@ -19,23 +26,17 @@ const statusConfig = {
     bgColor: 'bg-yellow-100',
     label: 'Pending'
   },
-  email_verification_pending: {
+  pending_verification: {
     icon: InformationCircleIcon,
     color: 'text-blue-600',
     bgColor: 'bg-blue-100',
-    label: 'Email Verification Pending'
+    label: 'Awaiting email verification'
   },
-  verified: {
-    icon: CheckCircleIcon,
-    color: 'text-green-600',
-    bgColor: 'bg-green-100',
-    label: 'Verified'
-  },
-  scheduled: {
-    icon: ClockIcon,
-    color: 'text-orange-600',
-    bgColor: 'bg-orange-100',
-    label: 'Scheduled'
+  processing: {
+    icon: ExclamationTriangleIcon,
+    color: 'text-red-700',
+    bgColor: 'bg-red-100',
+    label: 'Started, not finished'
   },
   completed: {
     icon: CheckCircleIcon,
@@ -48,17 +49,45 @@ const statusConfig = {
     color: 'text-gray-600',
     bgColor: 'bg-gray-100',
     label: 'Cancelled'
-  },
-  expired: {
-    icon: ExclamationTriangleIcon,
-    color: 'text-red-600',
-    bgColor: 'bg-red-100',
-    label: 'Expired'
   }
 }
 
+// Who asked for the deletion (the request's requestType)
+const typeLabels = {
+  authenticated: 'Requested by the user',
+  public: 'Requested by email',
+  admin: 'Deleted by an admin'
+}
+
+// The steps of a deletion, as the request names the one it stopped at
+const stepLabels = {
+  start: 'before anything was removed',
+  signOut: 'while signing the account out',
+  activity: 'while removing its watch history and notifications',
+  lists: 'while removing its lists',
+  legacySignIn: 'while removing its old sign-in rows',
+  requests: 'while closing its other requests',
+  account: 'while removing the account itself'
+}
+
+const auditLabels = {
+  request_created: 'Requested by the user',
+  public_request_created: 'Requested by email',
+  email_verified: 'Email verified',
+  admin_request_created: 'Started by an admin',
+  request_cancelled: 'Cancelled',
+  deletion_started: 'Deletion started',
+  deletion_resumed: 'Deletion run again',
+  deletion_failed: 'Deletion stopped part-way',
+  deletion_completed: 'Deletion completed'
+}
+
+/** A date as the page shows it; a request that has none yet shows a dash (formatDateToEST throws on a missing date). */
+const when = (value) => (value ? formatDateToEST(value) : '—')
+
 const initialRequestsState = {
   requests: [],
+  total: 0,
   loading: true,
   error: null,
   actionLoading: false,
@@ -66,12 +95,12 @@ const initialRequestsState = {
 
 function requestsReducer(state, action) {
   switch (action.type) {
-    case 'setRequests':
-      return { ...state, requests: action.value }
-    case 'setLoading':
-      return { ...state, loading: action.value }
-    case 'setError':
-      return { ...state, error: action.value }
+    case 'refreshing':
+      return { ...state, loading: true, error: null }
+    case 'loaded':
+      return { ...state, requests: action.requests, total: action.total, loading: false, error: null }
+    case 'failed':
+      return { ...state, loading: false, error: action.error }
     case 'setActionLoading':
       return { ...state, actionLoading: action.value }
     default:
@@ -79,113 +108,70 @@ function requestsReducer(state, action) {
   }
 }
 
+/** The newest requests. The route answers { success, data: { requests, pagination, filters } }. */
+async function loadRequests() {
+  const response = await fetch(`${REQUESTS_URL}?limit=${PAGE_SIZE}`)
+  if (!response.ok) {
+    throw new Error('Failed to fetch deletion requests')
+  }
+  const { data } = await response.json()
+  return { requests: data?.requests || [], total: data?.pagination?.total ?? 0 }
+}
+
+/** POST an action for one request; the route's own error text when it refuses. */
+async function postAction(body) {
+  const response = await fetch(REQUESTS_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  const answer = await response.json().catch(() => null)
+  if (!response.ok) {
+    throw new Error(answer?.error || answer?.message || 'Failed to perform action')
+  }
+  return answer
+}
+
 export default function DeletionRequestsAdmin() {
   const [requestsState, dispatch] = useReducer(requestsReducer, initialRequestsState)
-  const { requests, loading, error, actionLoading } = requestsState
+  const { requests, total, loading, error, actionLoading } = requestsState
 
-  const setRequests = (value) => dispatch({ type: 'setRequests', value })
-  const setLoading = (value) => dispatch({ type: 'setLoading', value })
-  const setError = (value) => dispatch({ type: 'setError', value })
   const setActionLoading = (value) => dispatch({ type: 'setActionLoading', value })
 
-  const [selectedRequests, setSelectedRequests] = useState(new Set())
   const [filter, setFilter] = useState('all')
   const [expandedRequest, setExpandedRequest] = useState(null)
+  // Counts the loads asked for: the first, then one per refresh
+  const [loads, setLoads] = useState(0)
 
   useEffect(() => {
-    fetchRequests()
-  }, [])
-
-  const fetchRequests = async () => {
-    try {
-      setLoading(true)
-      const response = await fetch('/api/authenticated/admin/deletion-requests')
-      if (!response.ok) {
-        throw new Error('Failed to fetch deletion requests')
-      }
-      const data = await response.json()
-      setRequests(data.requests || [])
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
+    let current = true
+    loadRequests()
+      .then((loaded) => current && dispatch({ type: 'loaded', ...loaded }))
+      .catch((err) => current && dispatch({ type: 'failed', error: err.message }))
+    return () => {
+      current = false
     }
+  }, [loads])
+
+  const fetchRequests = () => {
+    dispatch({ type: 'refreshing' })
+    setLoads((count) => count + 1)
   }
 
+  // The list stays on screen when an action is refused: the refusal is a toast
   const handleAction = async (requestId, action, reason = null) => {
     try {
       setActionLoading(true)
-      const response = await fetch('/api/authenticated/admin/deletion-requests', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action,
-          requestId,
-          reason
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to perform action')
-      }
-
-      await fetchRequests()
-      setSelectedRequests(new Set())
+      await postAction({ action, requestId, reason })
+      toast.success(action === 'execute' ? 'The account was deleted.' : 'The request was cancelled.')
     } catch (err) {
-      setError(err.message)
+      toast.error(err.message)
     } finally {
       setActionLoading(false)
-    }
-  }
-
-  const handleBulkAction = async (action, reason = null) => {
-    if (selectedRequests.size === 0) return
-
-    try {
-      setActionLoading(true)
-      const response = await fetch('/api/authenticated/admin/deletion-requests', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'bulk',
-          bulkAction: action,
-          requestIds: Array.from(selectedRequests),
-          reason
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to perform bulk action')
-      }
-
-      await fetchRequests()
-      setSelectedRequests(new Set())
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  const toggleRequestSelection = (requestId) => {
-    const newSelected = new Set(selectedRequests)
-    if (newSelected.has(requestId)) {
-      newSelected.delete(requestId)
-    } else {
-      newSelected.add(requestId)
-    }
-    setSelectedRequests(newSelected)
-  }
-
-  const toggleSelectAll = () => {
-    if (selectedRequests.size === filteredRequests.length) {
-      setSelectedRequests(new Set())
-    } else {
-      setSelectedRequests(new Set(filteredRequests.map(r => r._id)))
+      // Either way the request may have changed (a deletion that stopped has still begun)
+      fetchRequests()
     }
   }
 
@@ -205,9 +191,9 @@ export default function DeletionRequestsAdmin() {
 
   const statusCounts = getStatusCounts()
 
-  if (loading) {
+  if (loading && requests.length === 0) {
     return (
-      <div className="flex justify-center items-center h-64">
+      <div className="flex justify-center items-center h-64" role="status" aria-label="Loading deletion requests">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
       </div>
     )
@@ -215,9 +201,9 @@ export default function DeletionRequestsAdmin() {
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-md p-4">
+      <div className="bg-red-50 border border-red-200 rounded-md p-4" role="alert">
         <div className="flex">
-          <ExclamationTriangleIcon className="h-5 w-5 text-red-400" />
+          <ExclamationTriangleIcon className="h-5 w-5 text-red-400" aria-hidden="true" />
           <div className="ml-3">
             <h3 className="text-sm font-medium text-red-800">Error</h3>
             <p className="mt-2 text-sm text-red-700">{error}</p>
@@ -241,7 +227,7 @@ export default function DeletionRequestsAdmin() {
             Account Deletion Requests
           </h1>
           <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">
-            Manage user account deletion requests and data privacy compliance.
+            Deletions users asked for, and accounts admins deleted from the Users page.
           </p>
         </div>
         <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
@@ -255,11 +241,18 @@ export default function DeletionRequestsAdmin() {
         </div>
       </div>
 
+      {total > requests.length && (
+        <p className="text-sm text-gray-700 dark:text-gray-300">
+          Showing the newest {requests.length} of {total} requests.
+        </p>
+      )}
+
       {/* Status Filter Tabs */}
       <div className="border-b border-gray-200 dark:border-gray-700">
-        <nav className="-mb-px flex space-x-8">
+        <nav className="-mb-px flex flex-wrap gap-x-8" aria-label="Filter by status">
           <button
             onClick={() => setFilter('all')}
+            aria-pressed={filter === 'all'}
             className={`py-2 px-1 border-b-2 font-medium text-sm ${
               filter === 'all'
                 ? 'border-indigo-500 text-indigo-600'
@@ -272,6 +265,7 @@ export default function DeletionRequestsAdmin() {
             <button
               key={status}
               onClick={() => setFilter(status)}
+              aria-pressed={filter === status}
               className={`py-2 px-1 border-b-2 font-medium text-sm ${
                 filter === status
                   ? 'border-indigo-500 text-indigo-600'
@@ -283,35 +277,6 @@ export default function DeletionRequestsAdmin() {
           ))}
         </nav>
       </div>
-
-      {/* Bulk Actions */}
-      {selectedRequests.size > 0 && (
-        <div className="bg-gray-50 dark:bg-gray-800 px-4 py-3 rounded-md">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-700 dark:text-gray-300">
-              {selectedRequests.size} request{selectedRequests.size !== 1 ? 's' : ''} selected
-            </p>
-            <div className="flex space-x-2">
-              <button
-                onClick={() => handleBulkAction('execute')}
-                disabled={actionLoading}
-                className="inline-flex items-center rounded-md border border-transparent bg-red-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
-              >
-                <TrashIcon className="h-4 w-4 mr-1" />
-                Execute Selected
-              </button>
-              <button
-                onClick={() => handleBulkAction('cancel')}
-                disabled={actionLoading}
-                className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
-              >
-                <XMarkIcon className="h-4 w-4 mr-1" />
-                Cancel Selected
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Requests Table */}
       <div className="bg-white dark:bg-gray-800 shadow overflow-hidden sm:rounded-md">
@@ -331,41 +296,38 @@ export default function DeletionRequestsAdmin() {
               return (
                 <li key={request._id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                   <div className="px-6 py-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center">
-                        <input
-                          type="checkbox"
-                          checked={selectedRequests.has(request._id)}
-                          onChange={() => toggleRequestSelection(request._id)}
-                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                        />
-                        <div className="ml-4 flex items-center">
-                          <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.bgColor} ${config.color}`}>
-                            <IconComponent className="h-3 w-3 mr-1" />
-                            {config.label}
-                          </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.bgColor} ${config.color}`}>
+                          <IconComponent className="h-3 w-3 mr-1" aria-hidden="true" />
+                          {config.label}
                         </div>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          {typeLabels[request.requestType] || request.requestType}
+                        </span>
                       </div>
-                      
+
                       <div className="flex items-center space-x-4">
                         <div className="text-sm text-gray-900 dark:text-white">
                           {request.email || request.userId}
                         </div>
                         <div className="text-sm text-gray-500 dark:text-gray-400">
-                          {formatDateToEST(request.createdAt)}
+                          {when(request.requestedAt)}
                         </div>
                         <button
                           onClick={() => setExpandedRequest(isExpanded ? null : request._id)}
+                          aria-expanded={isExpanded}
                           className="text-indigo-600 hover:text-indigo-900 text-sm font-medium"
                         >
                           {isExpanded ? 'Hide' : 'Details'}
+                          <span className="sr-only"> for {request.email || request._id}</span>
                         </button>
                       </div>
                     </div>
 
                     {isExpanded && (
-                      <RequestDetails 
-                        request={request} 
+                      <RequestDetails
+                        request={request}
                         onAction={handleAction}
                         actionLoading={actionLoading}
                       />
@@ -381,21 +343,108 @@ export default function DeletionRequestsAdmin() {
   )
 }
 
+function Detail({ label, children }) {
+  return (
+    <div>
+      <dt className="inline font-medium text-gray-700 dark:text-gray-300">{label}:</dt>
+      <dd className="inline ml-2 text-gray-600 dark:text-gray-400">{children}</dd>
+    </div>
+  )
+}
+
+/** What a deletion removed, per collection, and the shared lists it left in place. */
+function DeletionResults({ results, finished }) {
+  const { keptSharedPlaylists = [], ...counts } = results || {}
+  const removed = Object.entries(counts).filter(([, count]) => typeof count === 'number' && count > 0)
+  if (removed.length === 0 && keptSharedPlaylists.length === 0) return null
+
+  return (
+    <div className="mt-4">
+      <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">{finished ? 'Removed' : 'Removed so far'}</h4>
+      {removed.length > 0 && (
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          {removed.map(([name, count]) => `${name}: ${count}`).join(' · ')}
+        </p>
+      )}
+      {keptSharedPlaylists.length > 0 && (
+        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+          Kept, without an owner: {keptSharedPlaylists.length} list{keptSharedPlaylists.length !== 1 ? 's' : ''} shared with
+          other people (<span className="font-mono">{keptSharedPlaylists.join(', ')}</span>)
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Who did what to the request, and when. Loaded when the details open. */
+function AuditLog({ requestId, version }) {
+  const [state, setState] = useState({ entries: null, error: null })
+
+  useEffect(() => {
+    let current = true
+    postAction({ action: 'get-audit-logs', requestId })
+      .then((answer) => current && setState({ entries: answer?.data?.auditLogs || [], error: null }))
+      .catch((err) => current && setState({ entries: null, error: err.message }))
+    return () => {
+      current = false
+    }
+    // `version` changes when the request does, so the log is read again after an action
+  }, [requestId, version])
+
+  return (
+    <div className="mt-4">
+      <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Audit log</h4>
+      {state.error && <p className="text-sm text-red-600">{state.error}</p>}
+      {!state.error && state.entries === null && <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>}
+      {state.entries?.length === 0 && <p className="text-sm text-gray-500 dark:text-gray-400">No entries.</p>}
+      {state.entries?.length > 0 && (
+        <ol className="space-y-1 text-sm text-gray-600 dark:text-gray-400">
+          {state.entries.map((entry) => (
+            <li key={entry.id}>
+              <span className="text-gray-500 dark:text-gray-500">{when(entry.performedAt)}</span>{' '}
+              <span className="font-medium text-gray-800 dark:text-gray-200">{auditLabels[entry.action] || entry.action}</span>
+              {entry.performedBy && <> by {entry.performedBy.name || entry.performedBy.email}</>}
+              {entry.action === 'deletion_failed' && entry.details?.error && <>: {entry.details.error}</>}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  )
+}
+
 function RequestDetails({ request, onAction, actionLoading }) {
   const [showActionForm, setShowActionForm] = useState(null)
   const [actionReason, setActionReason] = useState('')
 
   const handleActionSubmit = async (action) => {
-    await onAction(request._id, action, actionReason)
+    await onAction(request._id, action, action === 'cancel' ? actionReason : null)
     setShowActionForm(null)
     setActionReason('')
   }
 
-  const canExecute = ['verified', 'scheduled'].includes(request.status)
-  const canCancel = ['pending', 'email_verification_pending', 'verified', 'scheduled'].includes(request.status)
+  // What the route will accept (it sends both with each request)
+  const { canExecute, canCancel } = request
+  const stopped = request.status === 'processing'
+  // A user's own request before its grace period is over: the admin can still delete now, knowingly
+  const endsGraceEarly = request.status === 'pending' && request.requestType !== 'admin' && !request.gracePeriodOver
+  const executeLabel = stopped ? 'Run again' : 'Delete this account now'
 
   return (
     <div className="mt-4 border-t border-gray-200 dark:border-gray-600 pt-4">
+      {stopped && (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800" role="alert">
+          <p className="font-medium">
+            This deletion started and stopped {stepLabels[request.lastError?.step] || 'part-way'}.
+          </p>
+          {request.lastError?.message && <p className="mt-1">{request.lastError.message}</p>}
+          <p className="mt-1">
+            The account is signed out and can’t sign in. Run the deletion again to finish it: what is already gone
+            stays counted.
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Request Details</h4>
@@ -404,25 +453,24 @@ function RequestDetails({ request, onAction, actionLoading }) {
               <dt className="inline font-medium text-gray-700 dark:text-gray-300">ID:</dt>
               <dd className="inline ml-2 text-gray-600 dark:text-gray-400 font-mono">{request._id}</dd>
             </div>
-            <div>
-              <dt className="inline font-medium text-gray-700 dark:text-gray-300">Type:</dt>
-              <dd className="inline ml-2 text-gray-600 dark:text-gray-400">
-                {request.userId ? 'Authenticated' : 'Public'}
-              </dd>
-            </div>
+            <Detail label="Type">{typeLabels[request.requestType] || request.requestType}</Detail>
             {request.reason && (
               <div>
                 <dt className="font-medium text-gray-700 dark:text-gray-300">Reason:</dt>
                 <dd className="text-gray-600 dark:text-gray-400 mt-1">{request.reason}</dd>
               </div>
             )}
-            {request.scheduledDeletionDate && (
-              <div>
-                <dt className="inline font-medium text-gray-700 dark:text-gray-300">Scheduled:</dt>
-                <dd className="inline ml-2 text-gray-600 dark:text-gray-400">
-                  {formatDateToEST(request.scheduledDeletionDate)}
-                </dd>
-              </div>
+            <Detail label="Requested">{when(request.requestedAt)}</Detail>
+            {request.requestType !== 'admin' && request.scheduledDeletionAt && (
+              <Detail label="Grace period ends">{when(request.scheduledDeletionAt)}</Detail>
+            )}
+            {request.startedAt && <Detail label="Started">{when(request.startedAt)}</Detail>}
+            {request.completedAt && <Detail label="Completed">{when(request.completedAt)}</Detail>}
+            {request.cancelledAt && (
+              <Detail label="Cancelled">
+                {when(request.cancelledAt)}
+                {request.cancellationReason ? ` (${request.cancellationReason})` : ''}
+              </Detail>
             )}
           </dl>
         </div>
@@ -436,8 +484,8 @@ function RequestDetails({ request, onAction, actionLoading }) {
                 disabled={actionLoading}
                 className="w-full inline-flex justify-center items-center rounded-md border border-transparent bg-red-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
               >
-                <TrashIcon className="h-4 w-4 mr-1" />
-                Execute Deletion
+                <TrashIcon className="h-4 w-4 mr-1" aria-hidden="true" />
+                {executeLabel}
               </button>
             )}
             {canCancel && (
@@ -446,9 +494,12 @@ function RequestDetails({ request, onAction, actionLoading }) {
                 disabled={actionLoading}
                 className="w-full inline-flex justify-center items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
               >
-                <XMarkIcon className="h-4 w-4 mr-1" />
+                <XMarkIcon className="h-4 w-4 mr-1" aria-hidden="true" />
                 Cancel Request
               </button>
+            )}
+            {!canExecute && !canCancel && (
+              <p className="text-sm text-gray-500 dark:text-gray-400">Nothing more to do.</p>
             )}
           </div>
         </div>
@@ -457,22 +508,31 @@ function RequestDetails({ request, onAction, actionLoading }) {
       {showActionForm && (
         <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-md">
           <h5 className="text-sm font-medium text-gray-900 dark:text-white mb-2">
-            {showActionForm === 'execute' ? 'Execute Deletion' : 'Cancel Request'}
+            {showActionForm === 'execute' ? executeLabel : 'Cancel Request'}
           </h5>
           <div className="space-y-3">
-            <textarea
-              value={actionReason}
-              onChange={(e) => setActionReason(e.target.value)}
-              placeholder="Reason for this action (optional)"
-              rows={2}
-              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-600 dark:border-gray-500 dark:text-white sm:text-sm"
-            />
+            {showActionForm === 'execute' ? (
+              <p className="text-sm text-gray-700 dark:text-gray-200">
+                This deletes {request.email}’s account and its data now. It can’t be undone.
+                {endsGraceEarly &&
+                  ` The user has until ${when(request.scheduledDeletionAt)} to change their mind: deleting now ends that early.`}
+              </p>
+            ) : (
+              <textarea
+                value={actionReason}
+                onChange={(e) => setActionReason(e.target.value)}
+                placeholder="Reason for this action (optional)"
+                aria-label="Reason for cancelling (optional)"
+                rows={2}
+                className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-600 dark:border-gray-500 dark:text-white sm:text-sm"
+              />
+            )}
             <div className="flex justify-end space-x-2">
               <button
                 onClick={() => setShowActionForm(null)}
                 className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
               >
-                Cancel
+                Back
               </button>
               <button
                 onClick={() => handleActionSubmit(showActionForm)}
@@ -489,6 +549,9 @@ function RequestDetails({ request, onAction, actionLoading }) {
           </div>
         </div>
       )}
+
+      <DeletionResults results={request.deletionResults} finished={request.status === 'completed'} />
+      <AuditLog requestId={request._id} version={request.updatedAt} />
     </div>
   )
 }
