@@ -387,6 +387,10 @@ describe('startScheduledDeletions', () => {
     expect(timers.every).toHaveBeenCalledTimes(1)
     expect(timers.every.mock.calls[0][1]).toBe(CHECK_EVERY_MS)
     expect([FIRST_CHECK_MS, CHECK_EVERY_MS]).toEqual([60_000, 60 * 60_000])
+    // Said once: a check with nothing to do is silent, so this is the sign they run
+    expect(mockLog.info.mock.calls.filter(([, message]) => message === 'Scheduled account deletion checks started')).toEqual([
+      [{ firstCheckMs: 60_000, everyMs: 60 * 60_000 }, 'Scheduled account deletion checks started'],
+    ])
   })
 
   test('what the timers run is the check', async () => {

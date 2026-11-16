@@ -249,7 +249,7 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                                 href="/account/delete"
                                 className={`block px-4 py-2 text-sm text-gray-700 hover:bg-gray-400 ${focus ? 'bg-gray-100' : ''}`}
                               >
-                                Account Settings
+                                Delete account
                               </Link>
                             )}
                           </MenuItem>

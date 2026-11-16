@@ -156,4 +156,7 @@ export function startScheduledDeletions(timers: Timers = serverTimers): void {
   }
   timers.once(check, FIRST_CHECK_MS)
   timers.every(check, CHECK_EVERY_MS)
+  // A check that finds nothing to do logs nothing: this line is how a deploy
+  // is seen to have the checks running
+  log.info({ firstCheckMs: FIRST_CHECK_MS, everyMs: CHECK_EVERY_MS }, 'Scheduled account deletion checks started')
 }
