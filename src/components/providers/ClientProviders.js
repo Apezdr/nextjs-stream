@@ -1,11 +1,12 @@
 'use client'
 
-import { Suspense } from 'react'
+import { Suspense, useEffect } from 'react'
 import { NotificationProvider } from '@src/contexts/NotificationContext'
 import { SystemStatusProvider } from '@src/contexts/SystemStatusContext'
 import { NavigationProvider } from '@src/contexts/NavigationContext'
 import CastSessionBar from '@components/Cast/CastSessionBar'
 import Av1DecodeCheck from '@components/VideoPreview/Av1DecodeCheck'
+import { removeLocalPlaybackMirror } from '@components/WatchProgress/removeLocalPlaybackMirror'
 
 /**
  * Client-side provider wrapper component
@@ -13,6 +14,12 @@ import Av1DecodeCheck from '@components/VideoPreview/Av1DecodeCheck'
  * better-auth does not require a session provider wrapper.
  */
 export default function ClientProviders({ children, castBootstrap = null, playbackForSession = null }) {
+  // Once per document: the playback positions older versions left in this
+  // browser's storage are taken out. Nothing reads them any more.
+  useEffect(() => {
+    removeLocalPlaybackMirror()
+  }, [])
+
   return (
     <NotificationProvider>
       <SystemStatusProvider>

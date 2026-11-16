@@ -55,6 +55,7 @@ describe('the repository’s @removeAtVersion markers', () => {
         due('src/utils/sync/run/dropTitleHashes.js', 'Title-hash cleanup'),
         due('src/utils/notifications/notificationDatabase.js', 'readAt backfill'),
         due('src/utils/notifications/notificationDatabase.js', 'Unused Notifications index drop'),
+        due('src/components/WatchProgress/removeLocalPlaybackMirror.js', 'Removal of the playback positions older versions kept in the browser'),
       ])
     )
   })
