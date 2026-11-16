@@ -1,5 +1,6 @@
 import 'server-only'
 
+import { connection } from 'next/server'
 import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
 import { readTitlePosition } from '@src/utils/watchHistory/titlePosition'
 import { isDurableMediaId } from '@src/utils/watchHistory/resolve'
@@ -44,6 +45,14 @@ const isoOrNull = (value) => {
 export default async function TitlePlaybackSeed({ parsedParams, session }) {
   const userId = session?.user?.id
   if (!userId) return null
+
+  // Request time only, and said so before anything else runs: the read below
+  // is this viewer's row as it is now, and on its way it reads the clock (the
+  // resolver's cache, mediaIdResolver.js). Without this a prerender of the
+  // gated page (a link's prefetch) runs into that clock read and Next reports
+  // a blocking route. With it the prerender stops here, at this boundary,
+  // and the row is read when the page is actually asked for.
+  await connection()
 
   const { media, redirectUrl, notFoundType } = await getCachedMediaWithRedirect(parsedParams, session.access.id)
   if (!media || redirectUrl || notFoundType) return null

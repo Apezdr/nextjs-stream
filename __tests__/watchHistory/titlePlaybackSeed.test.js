@@ -7,6 +7,8 @@
  * (readTitlePosition), for the session the page's gate resolved, and renders
  * nothing rather than a seed it cannot stand behind.
  */
+const mockConnection = jest.fn(async () => {})
+jest.mock('next/server', () => ({ connection: (...args) => mockConnection(...args) }))
 const mockMedia = jest.fn()
 jest.mock('@src/utils/cache/mediaFetching', () => ({ getCachedMediaWithRedirect: (...args) => mockMedia(...args) }))
 const mockRead = jest.fn()
@@ -33,6 +35,28 @@ beforeEach(() => {
   jest.clearAllMocks()
   mockMedia.mockResolvedValue(page())
   mockRead.mockResolvedValue({ found: false, mediaId: 'mid:familyfilm', normalizedVideoId: 'nid-family', playbackTime: 0, lastUpdated: null, asOf: AS_OF })
+})
+
+// The read reaches the clock (the resolver's cache). Under Cache Components a
+// render that does so before it has said it is request-time is a blocking
+// route: the dev overlay reports it, and a link's prefetch of the gated page
+// runs into it. connection() comes first, before the media and the row.
+it('says it is request-time before it reads anything', async () => {
+  const order = []
+  mockConnection.mockImplementation(async () => void order.push('connection'))
+  mockMedia.mockImplementation(async () => (order.push('media'), page()))
+  mockRead.mockImplementation(async () => (order.push('row'), { found: false, asOf: AS_OF }))
+
+  await seed()
+
+  expect(order).toEqual(['connection', 'media', 'row'])
+})
+
+it('asks for nothing, not even a request, when the gate has no user', async () => {
+  expect(await seed({ user: null, access: ACCESS })).toBeNull()
+
+  expect(mockConnection).not.toHaveBeenCalled()
+  expect(mockMedia).not.toHaveBeenCalled()
 })
 
 it('reads the title’s row for the gate’s user and scope, by its id and the URL it plays from', async () => {
