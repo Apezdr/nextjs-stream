@@ -111,3 +111,17 @@ it('without an operation id, replays from the latest warm-up and ends with the f
   expect(stream.state.closed).toBe(true)
   stream.stop()
 })
+
+it('asks not to be transformed, so the server’s compression leaves the stream alone', async () => {
+  // Since Next 16.4.6 the server compresses route handler responses when
+  // self-hosted. A response that says no-transform is left out, and each
+  // event still goes out as it is sent (checked against a running 16.4.6
+  // server: heartbeats arrive one by one, with no Content-Encoding).
+  const abort = new AbortController()
+
+  const response = await GET(new Request('http://127.0.0.1:3000/api/authenticated/admin/sync-stream', { signal: abort.signal }))
+  abort.abort()
+
+  expect(response.headers.get('content-type')).toBe('text/event-stream')
+  expect(response.headers.get('cache-control')).toBe('no-cache, no-transform')
+})

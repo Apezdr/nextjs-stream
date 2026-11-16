@@ -166,7 +166,11 @@ export async function GET(request) {
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      // no-transform: since Next 16.4.6 the server compresses route handler
+      // responses (16.4.3 and earlier never did, when self-hosted). A
+      // response that says no-transform is left out of the compressor, so
+      // each event still goes to the socket as it is sent, as before
+      'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no', // Disable Nginx buffering
     },
