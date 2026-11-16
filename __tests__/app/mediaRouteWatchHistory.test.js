@@ -177,6 +177,49 @@ describe('a request about one title, when the history is read', () => {
   })
 })
 
+describe('a row the sync flagged (isValid:false)', () => {
+  const MOVIE = 'mediaType=movie&mediaOriginalTitle=Family%20Film%20(2001)&includeWatchHistory=true'
+  const watchHistoryOf = async (query) => (await (await get(query)).json()).watchHistory
+
+  it('is the title’s position when the title is asked about: it was just resolved, so the flag is stale', async () => {
+    history().docs.push(row({ isValid: false, playbackTime: 2100 }))
+
+    expect(await watchHistoryOf(MOVIE)).toMatchObject({ isWatched: true, playbackTime: 2100, progressPercent: 29.2 })
+  })
+
+  it('found by its URL alone, too', async () => {
+    history().docs.push(row({ isValid: false, normalizedVideoId: 'legacyhash0000001', mediaId: undefined, playbackTime: 900 }))
+
+    expect(await watchHistoryOf(MOVIE)).toMatchObject({ isWatched: true, playbackTime: 900 })
+  })
+
+  it('gives way to a row that is not flagged, whichever key each matches by', async () => {
+    // Flagged: the title's durable id, under an old file's hash, and the newer of the two
+    history().docs.push(
+      row({ isValid: false, normalizedVideoId: 'nid-old-file', playbackTime: 2100, lastUpdated: new Date('2026-11-12T20:00:00.000Z') }),
+      row({ mediaId: undefined, playbackTime: 600, lastUpdated: new Date('2026-11-01T20:00:00.000Z') })
+    )
+    expect(await watchHistoryOf(MOVIE)).toMatchObject({ isWatched: true, playbackTime: 600 })
+
+    // And to one found only by its URL
+    history().docs[1] = row({ normalizedVideoId: 'legacyhash0000001', mediaId: undefined, playbackTime: 300 })
+    expect(await watchHistoryOf(MOVIE)).toMatchObject({ isWatched: true, playbackTime: 300 })
+  })
+
+  it('stays out of a list: the season page’s episodes read it as not watched, the episode asked about by itself does not', async () => {
+    const flaggedEpisode = episode(2)
+    history().docs.push(
+      row({ isValid: false, videoId: flaggedEpisode.videoURL, normalizedVideoId: flaggedEpisode.normalizedVideoId, mediaId: flaggedEpisode.mediaId, playbackTime: 1200, mediaType: 'tv' })
+    )
+
+    const listed = await (await get('mediaType=tv&mediaId=show-1&season=1&isTVdevice=true&includeWatchHistory=true')).json()
+    expect(listed.episodes.map((e) => e.watchHistory.isWatched)).toEqual([false, false])
+
+    const asked = await watchHistoryOf('mediaType=tv&mediaId=show-1&season=1&episode=2&isTVdevice=true&includeWatchHistory=true')
+    expect(asked).toMatchObject({ isWatched: true, playbackTime: 1200, progressPercent: 50 })
+  })
+})
+
 describe('a request about one title, when the history cannot be read', () => {
   const REQUESTS = [
     ['a movie', 'mediaType=movie&mediaOriginalTitle=Family%20Film%20(2001)&includeWatchHistory=true'],

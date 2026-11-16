@@ -188,7 +188,8 @@ export async function addWatchHistoryToItems(items, userId) {
   }
 }
 
-// What the join reads of a row (buildWatchHistoryLookupMap, buildWatchHistoryObject)
+// What the join reads of a row (buildWatchHistoryLookupMap,
+// buildWatchHistoryObject), and the sync's flag on it
 const TITLE_ROW_FIELDS = {
   videoId: 1,
   normalizedVideoId: 1,
@@ -199,6 +200,7 @@ const TITLE_ROW_FIELDS = {
   showId: 1,
   seasonNumber: 1,
   episodeNumber: 1,
+  isValid: 1,
 }
 
 /**
@@ -217,6 +219,14 @@ const TITLE_ROW_FIELDS = {
  * one by URL only when that finds nothing (a row from before URLs were
  * hashed as they are now).
  *
+ * A row the sync flagged isValid:false counts here, where the list join
+ * skips it. The flag says the sync could not match the row to a title. This
+ * title was just resolved from the catalog and the row matches it, so the
+ * flag is stale; and a client told "no row" starts at 0 and saves over that
+ * very row, which a write still updates. A row that is not flagged wins
+ * whenever one matches, by any key: the answer changes only where the list
+ * join's would have been "no row".
+ *
  * @param {Object} item - the movie or episode (mediaId, normalizedVideoId, videoURL…)
  * @param {string|ObjectId} userId - User ID
  * @returns {Promise<Object>} the item with its `watchHistory`
@@ -227,9 +237,9 @@ export async function addWatchHistoryToTitle(item, userId) {
   const durableIds = keys.filter(isDurableMediaId)
   const hashesAndUrls = keys.filter((key) => !isDurableMediaId(key))
 
-  const read = (identity) =>
-    findPlaybackForUser(userId, { filter: { ...identity, isValid: { $ne: false } }, projection: TITLE_ROW_FIELDS })
+  const read = (identity) => findPlaybackForUser(userId, { filter: identity, projection: TITLE_ROW_FIELDS })
   const match = (rows) => resolveWatchEntry(item, buildWatchHistoryLookupMap(rows))
+  const flagged = (row) => row.isValid === false
 
   let watchData = null
   if (keys.length > 0) {
@@ -237,10 +247,16 @@ export async function addWatchHistoryToTitle(item, userId) {
       ...(durableIds.length > 0 ? [{ mediaId: { $in: durableIds } }] : []),
       ...(hashesAndUrls.length > 0 ? [{ normalizedVideoId: { $in: hashesAndUrls } }] : []),
     ]
-    watchData = match(await read({ $or: identities }))
+    const byKey = await read({ $or: identities })
+    watchData = match(byKey.filter((row) => !flagged(row)))
+
+    let byUrl = []
     if (!watchData && hashesAndUrls.length > 0) {
-      watchData = match(await read({ videoId: { $in: hashesAndUrls } }))
+      byUrl = await read({ videoId: { $in: hashesAndUrls } })
+      watchData = match(byUrl.filter((row) => !flagged(row)))
     }
+
+    watchData = watchData ?? match(byKey.filter(flagged)) ?? match(byUrl.filter(flagged))
   }
 
   return { ...item, watchHistory: buildWatchHistoryObject(item, watchData) }
