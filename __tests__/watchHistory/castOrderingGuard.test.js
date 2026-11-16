@@ -56,9 +56,10 @@ jest.mock('@src/utils/watchHistory/mediaIdResolver', () => ({
   resolveMediaIdForNid: jest.fn(async () => ({ mediaId: 'mid:abc123' })),
 }))
 
+const mockLogInfo = jest.fn()
 jest.mock('@src/lib/logger', () => ({
   __esModule: true,
-  createLogger: () => ({ debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }),
+  createLogger: () => ({ debug: jest.fn(), info: (...args) => mockLogInfo(...args), warn: jest.fn(), error: jest.fn() }),
 }))
 
 // The driver ships bson as untransformed ESM, which jest cannot parse. Only
@@ -114,6 +115,20 @@ describe('upsertPlaybackFromCast — ordering guard', () => {
   it('creates nothing for a cast stopped under the start threshold', async () => {
     await expect(report(4)).resolves.toBe(false)
     expect(store).toBeNull()
+  })
+
+  it('logs a held report once, at info level, so held writes can be counted in production', async () => {
+    await report(4)
+    const held = mockLogInfo.mock.calls.filter(([fields]) => fields?.outcome === 'held')
+    expect(held).toHaveLength(1)
+    expect(held[0][0]).toEqual({ userId: String(USER), normalizedVideoId: NID, playbackTime: 4, outcome: 'held' })
+
+    // A report that is applied, or dropped by the ordering guard, is not a held one
+    mockLogInfo.mockClear()
+    await expect(report(300)).resolves.toBe(true)
+    seed({ playbackTime: 1200, lastWriter: 'client', lastUpdated: new Date() })
+    await expect(report(600)).resolves.toBe(false)
+    expect(mockLogInfo.mock.calls.filter(([fields]) => fields?.outcome === 'held')).toHaveLength(0)
   })
 
   it('still moves an existing row under the start threshold', async () => {

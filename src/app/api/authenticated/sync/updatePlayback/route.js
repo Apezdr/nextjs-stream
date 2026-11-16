@@ -144,6 +144,7 @@ export const POST = async (req) => {
       // One line per write, after it, so it can say what the write did:
       // 'created' | 'updated' | 'held' (kept from creating a row by the start
       // threshold — the count that says whether WATCH_START_THRESHOLD_S is right).
+      // At info level on purpose: the held count is read in production.
       log.info(
         { userId: userId.toString(), videoId, playbackTime, kind: effectiveKind, outcome: result.outcome },
         'Updating playback status'
@@ -186,11 +187,19 @@ export const POST = async (req) => {
       await invalidateUserWatchHistoryCache(authResult.id)
     }
 
+    // `savedAt` is the row's lastUpdated after this write, by the server's
+    // clock: what a client compares a later read's lastUpdated with, in place
+    // of its own clock. `outcome` says what the write did to the row:
+    // 'created', 'updated', or 'held' (no row, and none made). Both are null
+    // for a keep-alive, which writes no position, and savedAt for a held
+    // write, which leaves no row.
     return new Response(
       JSON.stringify({
         message: result ? 'Playback status updated successfully' : 'Keep-alive acknowledged',
         acknowledged: result ? result.acknowledged : presenceRefreshed,
         kind: effectiveKind,
+        savedAt: result?.savedAt ?? null,
+        outcome: result?.outcome ?? null,
       }),
       {
         status: 200,

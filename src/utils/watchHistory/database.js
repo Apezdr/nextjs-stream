@@ -125,7 +125,9 @@ async function rekeySiblingAndApply(collection, { userIdObj, mediaId, normalized
  * @param {string} [options.ipAddress] - Server-observed client IP (proxy-aware)
  * @param {string} [options.localIp] - Optional device-reported local/LAN IP
  * @returns {Promise<Object>} the update result, plus `outcome`: 'created' |
- *   'updated' | 'held' (under WATCH_START_THRESHOLD_S with no row to update)
+ *   'updated' | 'held' (under WATCH_START_THRESHOLD_S with no row to update),
+ *   and `savedAt`: the `lastUpdated` this write gave the row (the server's
+ *   clock), or null when it was held and there is no row
  */
 export async function upsertPlayback({
   userId,
@@ -270,7 +272,11 @@ export async function upsertPlayback({
       'Playback upserted'
     )
 
-    return { ...result, outcome }
+    // Every path that wrote (the plain update, the upsert, the quality-swap
+    // move) set the same lastUpdated: the row's, and so the write's own time
+    const savedAt = outcome === 'held' ? null : updateDoc.$set.lastUpdated
+
+    return { ...result, outcome, savedAt }
   } catch (error) {
     log.error({ error, userId, videoId }, 'Failed to upsert playback')
     throw error
@@ -400,8 +406,11 @@ export async function upsertPlaybackFromCast({
         })
       : null
     if (!merged) {
-      log.debug(
-        { userId: userIdObj.toString(), normalizedVideoId, playbackTime },
+      // At info level, like the client writer's line (the updatePlayback
+      // route's 'Updating playback status'): the two together are the count
+      // of held writes
+      log.info(
+        { userId: userIdObj.toString(), normalizedVideoId, playbackTime, outcome: 'held' },
         'Cast playback held: under the start threshold with no row'
       )
     }

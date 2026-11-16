@@ -152,7 +152,8 @@ describe('the start threshold', () => {
     const res = await post({ playbackTime: 4.1, kind: 'final', isPaused: true })
 
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({
+    // The fields clients read before the answer said what the write did
+    expect(await res.json()).toMatchObject({
       message: 'Playback status updated successfully',
       acknowledged: true,
       kind: 'final',
@@ -216,5 +217,63 @@ describe('the start threshold', () => {
     const upserts = historyCollection.updateOne.mock.calls.filter(([, , options]) => options?.upsert)
     expect(upserts).toHaveLength(0)
     expect(history).toBeNull()
+  })
+})
+
+describe('the answer says what the write did, and when', () => {
+  const answer = async (body) => (await post(body)).json()
+
+  it('created: savedAt is the lastUpdated the new row was given', async () => {
+    const before = Date.now()
+    const body = await answer({ playbackTime: 47, kind: 'progress', isPaused: false })
+
+    expect(body).toEqual({
+      message: 'Playback status updated successfully',
+      acknowledged: true,
+      kind: 'progress',
+      savedAt: history.lastUpdated.toISOString(),
+      outcome: 'created',
+    })
+    // The server's clock, at the write
+    expect(new Date(body.savedAt).getTime()).toBeGreaterThanOrEqual(before)
+    expect(new Date(body.savedAt).getTime()).toBeLessThanOrEqual(Date.now())
+  })
+
+  it('updated: savedAt is the row’s new lastUpdated', async () => {
+    seedRow(1240)
+    const body = await answer({ playbackTime: 1300, kind: 'progress', isPaused: false })
+
+    expect(body.outcome).toBe('updated')
+    expect(body.savedAt).toBe(history.lastUpdated.toISOString())
+  })
+
+  it('updated, under the resume floor: the position is kept, and savedAt is still the row’s lastUpdated', async () => {
+    seedRow(1240)
+    const body = await answer({ playbackTime: 1, kind: 'progress', isPaused: false })
+
+    expect(history.playbackTime).toBe(1240)
+    expect(body.outcome).toBe('updated')
+    expect(body.savedAt).toBe(history.lastUpdated.toISOString())
+  })
+
+  it('held: there is no row, so no savedAt', async () => {
+    const body = await answer({ playbackTime: 4.1, kind: 'final', isPaused: true })
+
+    expect(body).toEqual({
+      message: 'Playback status updated successfully',
+      acknowledged: true,
+      kind: 'final',
+      savedAt: null,
+      outcome: 'held',
+    })
+  })
+
+  it('a held write is logged once, at info level, so held writes can be counted in production', async () => {
+    await post({ playbackTime: 4.1, kind: 'final', isPaused: true })
+
+    const held = mockLogInfo.mock.calls.filter(([fields]) => fields?.outcome === 'held')
+    expect(held).toHaveLength(1)
+    // What the line already carried, and no more
+    expect(Object.keys(held[0][0]).sort()).toEqual(['kind', 'outcome', 'playbackTime', 'userId', 'videoId'])
   })
 })

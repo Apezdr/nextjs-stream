@@ -241,6 +241,8 @@ describe('POST /api/authenticated/sync/updatePlayback', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.kind).toBe('keepalive')
+    // No position was written: nothing was saved, and the row saw no outcome
+    expect(body).toMatchObject({ savedAt: null, outcome: null })
     expect(history.playbackTime).toBe(1500)
     expect(presence.playbackTime).toBe(1500)
     expect(presence.state).toBe('paused')
