@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { ArrowPathIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
+import { PLAYBACK_USER_MISMATCH } from '@src/lib/playbackUser'
 import ProgressBar from './ProgressBar'
 import useWatchPosition from './useWatchPosition'
 import { formatRemaining } from './progress'
@@ -17,12 +18,25 @@ import { withStartOver } from './primaryAction'
  *
  * Reads the viewer's position through useWatchPosition (shared with the
  * primary button and the sticky bar), so it stays live while the film plays
- * elsewhere. Renders nothing until there is a position to show.
+ * elsewhere. Renders nothing until there is a position to show, and nothing
+ * for a title the viewer has not started.
  *
- * @param {{ videoURL: string|null, mediaId?: string|null, durationMs?: number|null, playHref: string, className?: string }} props
+ * When the position could not be read (the request failed, or the browser's
+ * session is no longer this page's user's) it says so in one line: an empty
+ * panel would read as "not started".
+ *
+ * @param {{ videoURL: string|null, mediaId?: string|null, normalizedVideoId?: string|null, durationMs?: number|null, playHref: string, className?: string }} props
  */
-export default function WatchProgressPanel({ videoURL, mediaId = null, durationMs = null, playHref, className = '' }) {
-  const { progress } = useWatchPosition({ videoURL, mediaId, durationMs })
+export default function WatchProgressPanel({ videoURL, mediaId = null, normalizedVideoId = null, durationMs = null, playHref, className = '' }) {
+  const { progress, unknown, refusal } = useWatchPosition({ videoURL, mediaId, normalizedVideoId, durationMs })
+
+  if (unknown) {
+    return (
+      <p className={classNames('text-sm text-white/60', className)} role="status" data-testid="watch-progress-unknown">
+        {refusal === 409 ? PLAYBACK_USER_MISMATCH.message : 'Your progress could not be loaded.'}
+      </p>
+    )
+  }
 
   if (!progress.hasProgress) return null
 

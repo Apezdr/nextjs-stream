@@ -52,8 +52,14 @@ const MovieDetailsComponent = ({ media, access }) => {
   const chips = qualityChips(media)
   const facts = movieFacts(media)
   const genreNames = (genres || []).map((g) => g?.name).filter(Boolean)
-  // What the progress-aware pieces (primary button, resume panel, sticky bar) need to look the position up
-  const progressProps = { videoURL: media.videoURL || null, mediaId: media.mediaId || null, durationMs }
+  // What the progress-aware pieces (primary button, resume panel, sticky bar) need to look the position up:
+  // the title's two identities, as the catalog holds them (the store hashes nothing)
+  const progressProps = {
+    videoURL: media.videoURL || null,
+    mediaId: media.mediaId || null,
+    normalizedVideoId: media.normalizedVideoId || null,
+    durationMs,
+  }
 
   return (
     <div className="media-details-page relative mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6 lg:px-8">

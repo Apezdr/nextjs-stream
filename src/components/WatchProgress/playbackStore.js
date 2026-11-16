@@ -291,7 +291,7 @@ export function createPlaybackStore({
     if (userId === null) {
       userId = next
       openChannel()
-      presence?.observe(onPresence)
+      presence?.observe?.(onPresence)
       if (listeners.size > 0) onSubscribe()
       askWanted()
       return true

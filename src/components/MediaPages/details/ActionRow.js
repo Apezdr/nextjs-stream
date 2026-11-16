@@ -20,6 +20,7 @@ export { SECONDARY_CLASSES }
  * @param {Object} props
  * @param {string|null} props.videoURL
  * @param {string|null} [props.mediaId]
+ * @param {string|null} [props.normalizedVideoId] - see PrimaryPlayButton
  * @param {number|null} [props.durationMs]
  * @param {string} props.playHref
  * @param {string|null} [props.trailerUrl]
@@ -33,6 +34,7 @@ export { SECONDARY_CLASSES }
 export default function ActionRow({
   videoURL,
   mediaId = null,
+  normalizedVideoId = null,
   durationMs = null,
   playHref,
   trailerUrl = null,
@@ -48,6 +50,7 @@ export default function ActionRow({
       <PrimaryPlayButton
         videoURL={videoURL}
         mediaId={mediaId}
+        normalizedVideoId={normalizedVideoId}
         durationMs={durationMs}
         playHref={playHref}
         noun={noun}

@@ -41,6 +41,7 @@ function DialogBody({ episode, completed, onClose, onMarked, userId }) {
           <PrimaryPlayButton
             videoURL={episode.videoURL}
             mediaId={episode.mediaId}
+            normalizedVideoId={episode.normalizedVideoId}
             durationMs={episode.durationMs}
             playHref={episode.hrefs.play}
             watchHistory={episode.watchHistory}
@@ -88,7 +89,7 @@ export default function EpisodeActionDialog({ open, episode, onClose, onMarked =
   const progress = useLiveProgress({
     watchHistory: episode?.watchHistory ?? null,
     mediaId: episode?.mediaId ?? null,
-    videoURL: episode?.videoURL ?? null,
+    normalizedVideoId: episode?.normalizedVideoId ?? null,
     durationMs: episode?.durationMs ?? null,
     enabled: Boolean(episode),
   })

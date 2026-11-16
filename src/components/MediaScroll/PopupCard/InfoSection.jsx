@@ -69,6 +69,8 @@ const InfoSection = ({
   watchHistory = null,
   duration = null,
   durableMediaId = null,
+  // The hash of the title's file, as the payload carries it
+  normalizedVideoId = null,
   // The card's live-session target (Card): { title } or { showId }, or null
   liveTarget = null,
   onOpenArr = null,
@@ -80,11 +82,12 @@ const InfoSection = ({
 
   // Where the viewer is in this title. Movies and specific episodes only; a
   // show-level card has no single position. Live: the newer of the fetched
-  // object and the local mirror.
+  // object and the positions store.
   const progressEligible = canShowProgress({ type, seasonNumber, episodeNumber })
   const progress = useLiveProgress({
     watchHistory,
     mediaId: durableMediaId,
+    normalizedVideoId,
     durationMs: durationMsFrom({ duration, metadata: data?.metadata ?? metadata }),
     enabled: progressEligible,
   })

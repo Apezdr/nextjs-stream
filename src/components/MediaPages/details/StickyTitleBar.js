@@ -32,13 +32,14 @@ const useMounted = () => useSyncExternalStore(subscribeOnce, () => true, () => f
  * @param {string|null} [props.subtitle]
  * @param {string|null} props.videoURL
  * @param {string|null} [props.mediaId]
+ * @param {string|null} [props.normalizedVideoId] - the hash of the title's file, as the server gave it
  * @param {number|null} [props.durationMs]
  * @param {string} props.playHref
  */
-export default function StickyTitleBar({ sentinelId, title, subtitle = null, videoURL, mediaId = null, durationMs = null, playHref }) {
+export default function StickyTitleBar({ sentinelId, title, subtitle = null, videoURL, mediaId = null, normalizedVideoId = null, durationMs = null, playHref }) {
   const mounted = useMounted()
   const [past, setPast] = useState(false)
-  const { progress } = useWatchPosition({ videoURL, mediaId, durationMs })
+  const { progress } = useWatchPosition({ videoURL, mediaId, normalizedVideoId, durationMs })
 
   useEffect(() => {
     if (typeof IntersectionObserver === 'undefined') return undefined
@@ -75,7 +76,7 @@ export default function StickyTitleBar({ sentinelId, title, subtitle = null, vid
             {title}
             {subtitle ? <span className="font-normal text-white/60">: {subtitle}</span> : null}
           </p>
-          <PrimaryPlayButton videoURL={videoURL} mediaId={mediaId} durationMs={durationMs} playHref={playHref} size="sm" />
+          <PrimaryPlayButton videoURL={videoURL} mediaId={mediaId} normalizedVideoId={normalizedVideoId} durationMs={durationMs} playHref={playHref} size="sm" />
         </div>
         <div className="h-0.5 w-full bg-white/10" aria-hidden="true">
           <div

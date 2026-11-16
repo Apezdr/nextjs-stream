@@ -7,6 +7,7 @@ import {
   TVEpisodeDetailsView,
 } from '@src/components/MediaPages/DynamicPage'
 import EpisodePageSkeleton from '@src/components/MediaPages/details/EpisodePageSkeleton'
+import TitlePlaybackSeed from '@src/components/WatchProgress/TitlePlaybackSeed'
 import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
 import { episodeDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTags'
@@ -94,12 +95,21 @@ export default function TVEpisodePage({ params }) {
         }
       >
         {({ session, params: { title, season, episode } }) => (
-          <TVEpisodeContent
-            title={title}
-            season={season}
-            episode={episode}
-            scopeId={session.access.id}
-          />
+          <>
+            <TVEpisodeContent
+              title={title}
+              season={season}
+              episode={episode}
+              scopeId={session.access.id}
+            />
+            {/* The one per-viewer read of this page: where this viewer is in
+                the episode, for the button, the panel and the bar that the
+                cached content above cannot fill in. After the content and in
+                its own boundary, so nothing waits for it. */}
+            <Suspense fallback={null}>
+              <TitlePlaybackSeed parsedParams={buildParsedParams(title, season, episode)} session={session} />
+            </Suspense>
+          </>
         )}
       </SessionGate>
     </Suspense>

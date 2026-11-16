@@ -1,37 +1,6 @@
 'use client'
 
-import { cache, useMemo } from 'react'
-import { getPlaybackStorageKey, readWithLegacyFallback } from '@src/utils/playbackStorageKey'
-
-/**
- * The tracker/mirror entry for a title, with its timestamp, so callers can
- * tell whether it is newer than a server value they already hold.
- *
- * @returns {{ playbackTime: number, lastUpdated: number|null }|null}
- */
-export function getWatchedEntry(videoURL, mediaId = null) {
-  if (typeof window === 'undefined') return null
-  const stableKey = getPlaybackStorageKey({ mediaId, videoURL })
-  try {
-    const savedData = JSON.parse(readWithLegacyFallback(stableKey, videoURL))
-    const playbackTime = parseFloat(savedData?.playbackTime)
-    if (!Number.isFinite(playbackTime) || playbackTime <= 0) return null
-    const lastUpdated = savedData?.lastUpdated ? new Date(savedData.lastUpdated).getTime() : NaN
-    return { playbackTime, lastUpdated: Number.isFinite(lastUpdated) ? lastUpdated : null }
-  } catch {
-    return null
-  }
-}
-
-export function getWatchedTime(videoURL, mediaId = null) {
-  if (typeof window === 'undefined') return 0
-  // Stable identity key when resolved; falls back to (and migrates forward
-  // from) the legacy videoURL key.
-  const stableKey = getPlaybackStorageKey({ mediaId, videoURL })
-  const savedData = JSON.parse(readWithLegacyFallback(stableKey, videoURL))
-  const savedTime = savedData ? Math.round(parseFloat(savedData.playbackTime)) : 0
-  return savedTime
-}
+import useLiveProgress from '@components/WatchProgress/useLiveProgress'
 
 function convertRuntime(runtimeMs) {
   if (typeof runtimeMs !== 'number') {
@@ -64,41 +33,46 @@ export function formatWatchedTime(watchedSeconds, totalRuntime) {
   return `${formattedWatched} - ${convertRuntime(totalRuntime)}`
 }
 
-export function TotalRuntime({ length, metadata, videoURL, mediaId = null, classNames, watchedSeconds }) {
-  const displayTime = useMemo(() => {
-    // Prefer server-provided watchedSeconds, fallback to localStorage
-    const watchedTimeInSeconds = (watchedSeconds !== undefined && watchedSeconds !== null)
-      ? watchedSeconds
-      : getWatchedTime(videoURL, mediaId)
-    const formattedDisplayTime = formatWatchedTime(
-      watchedTimeInSeconds,
-      length ?? metadata?.runtime ?? 'Unknown'
-    )
-    return formattedDisplayTime
-  }, [length, metadata, videoURL, mediaId, watchedSeconds])
-
-  return <span className={classNames}>{displayTime}</span>
+function RuntimeText({ watchedSeconds, length, metadata, classNames }) {
+  return <span className={classNames}>{formatWatchedTime(watchedSeconds, length ?? metadata?.runtime ?? 'Unknown')}</span>
 }
 
-export const totalRuntimeInPercentage = cache((length, metadata, videoURL, mediaId = null) => {
-  if (!videoURL && !mediaId) {
-    return 0
+/** The clock for a title whose position the caller did not read: read here, from the positions store. */
+function LiveTotalRuntime({ length, metadata, mediaId, normalizedVideoId, watchHistory, classNames }) {
+  const progress = useLiveProgress({ watchHistory, mediaId, normalizedVideoId })
+  return <RuntimeText watchedSeconds={Math.round(progress.playbackTime)} length={length} metadata={metadata} classNames={classNames} />
+}
+
+/**
+ * "00:41:12 - 01:58:03": how far the viewer is in a title, and its runtime.
+ *
+ * A surface that already reads the title's progress (a poster, through
+ * useWatched) passes `watchedSeconds` and this only formats it. Without it the
+ * position is read here: the newer of the item's `watchHistory` object and
+ * what the positions store holds for the title, found by `mediaId` and
+ * `normalizedVideoId`.
+ *
+ * @param {Object} props
+ * @param {number} props.length - the runtime, in milliseconds
+ * @param {Object} [props.metadata]
+ * @param {string|null} [props.mediaId] - durable 'mid:…' identity
+ * @param {string|null} [props.normalizedVideoId] - the hash of the title's file
+ * @param {Object|null} [props.watchHistory] - the server's watch-history object for the title
+ * @param {string} [props.classNames]
+ * @param {number} [props.watchedSeconds] - the position, when the caller has read it
+ */
+export function TotalRuntime({ length, metadata, mediaId = null, normalizedVideoId = null, watchHistory = null, classNames, watchedSeconds }) {
+  if (watchedSeconds !== undefined && watchedSeconds !== null) {
+    return <RuntimeText watchedSeconds={watchedSeconds} length={length} metadata={metadata} classNames={classNames} />
   }
-
-  const watchedTimeInSeconds = getWatchedTime(videoURL, mediaId)
-  let totalRuntimeInSeconds = 0
-
-  if (length) {
-    // Assuming 'length' is a property for movies, in ms to seconds
-    totalRuntimeInSeconds = length / 1000
-  } else if (metadata?.runtime) {
-    // Assuming 'runtime' is a property for TV episodes, in minutes
-    totalRuntimeInSeconds = metadata.runtime * 60
-  }
-
-  if (totalRuntimeInSeconds === 0) {
-    return 0
-  }
-
-  return (watchedTimeInSeconds / totalRuntimeInSeconds) * 100
-})
+  return (
+    <LiveTotalRuntime
+      length={length}
+      metadata={metadata}
+      mediaId={mediaId}
+      normalizedVideoId={normalizedVideoId}
+      watchHistory={watchHistory}
+      classNames={classNames}
+    />
+  )
+}

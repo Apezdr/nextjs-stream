@@ -53,6 +53,7 @@ const PopupCard = (props) => {
     watchHistory: railWatchHistory = null,
     duration: railDuration = null,
     durableMediaId = null,
+    normalizedVideoId = null,
     liveTarget = null,
     onOpenArr = null,
   } = props
@@ -79,7 +80,7 @@ const PopupCard = (props) => {
     keepPreviousData: true,  // Prevents flash of loading state during transitions
     compare: (a, b) => JSON.stringify(a) === JSON.stringify(b), // Stable comparison for object data
     // A popup left open while the title plays elsewhere keeps its position
-    // current (the local mirror covers the seconds in between).
+    // current (the positions store covers the seconds in between).
     refreshInterval: 20000,
   })
 
@@ -258,6 +259,7 @@ const PopupCard = (props) => {
           watchHistory={data?.watchHistory ?? railWatchHistory}
           duration={data?.duration ?? railDuration}
           durableMediaId={data?.mediaId ?? durableMediaId}
+          normalizedVideoId={data?.normalizedVideoId ?? normalizedVideoId}
           liveTarget={liveTarget}
           onOpenArr={onOpenArr}
         />

@@ -57,8 +57,14 @@ const TVEpisodeDetailsComponent = ({ media }) => {
   const code = `S${pad2(seasonNumber)}E${pad2(episodeNumber)}`
   const finale = episodeTypeLabel(episode_type)
   const chips = [...(finale ? [finale] : []), ...qualityChips(media)]
-  // What the progress-aware pieces (primary button, resume panel, sticky bar) need to look the position up
-  const progressProps = { videoURL: media.videoURL || null, mediaId: media.mediaId || null, durationMs }
+  // What the progress-aware pieces (primary button, resume panel, sticky bar) need to look the position up:
+  // the title's two identities, as the catalog holds them (the store hashes nothing)
+  const progressProps = {
+    videoURL: media.videoURL || null,
+    mediaId: media.mediaId || null,
+    normalizedVideoId: media.normalizedVideoId || null,
+    durationMs,
+  }
   const stickyTitle = `${code} · ${headline}`
   // Genres first (what the movie page shows); a show without them falls back to its network
   const genreNames = (genres || []).map((g) => g?.name).filter(Boolean)

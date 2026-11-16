@@ -151,8 +151,8 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     // volatile (lastWatched moves every heartbeat), and this list already
     // re-polls every 10 s, so a rail that carried it would re-download its
     // whole payload while anything on it is being watched. Every other rail
-    // stays ETag-stable; its cards and popups read progress from the local
-    // mirror instead (useLiveProgress).
+    // stays ETag-stable; its cards and popups read progress from the
+    // positions store instead (useLiveProgress).
     if (listType === 'recentlyWatched') params.append('includeWatchHistory', 'true')
     return `/api/authenticated/horizontal-list?${params.toString()}`
   }, [itemsPerPage, listType, sort, sortOrder, playlistId])

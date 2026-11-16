@@ -170,16 +170,19 @@ function paramsFor(route, pathname) {
 /**
  * The per-title tags a page puts on its cache entry, from the page's own code:
  * <Suspense><SessionGate>{content}</SessionGate></Suspense>, where the content
- * is the cached component that calls cacheTag.
+ * is the cached component that calls cacheTag. The movie and episode pages
+ * render it first of two: their per-viewer seed (TitlePlaybackSeed) comes
+ * after it, outside the cache.
  */
 async function pageTitleTags(kind, ...urlArgs) {
   const { route, Page, url } = PAGES[kind]
   const params = paramsFor(route, url(...urlArgs))
   const gate = Page({ params: Promise.resolve(params) }).props.children
-  const content = gate.props.children({
+  const gated = gate.props.children({
     session: { user: { id: 'viewer-1' }, access: { id: 'all', scope: null, showIds: null } },
     params,
   })
+  const content = Array.isArray(gated.props.children) ? gated.props.children[0] : gated
   mockCacheTag.mockClear()
   await content.type(content.props)
   return mockCacheTag.mock.calls

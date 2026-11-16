@@ -3,7 +3,7 @@ import { cache, useSyncExternalStore, ViewTransition } from 'react'
 import { classNames, generateColors, getFullImageUrl, getResolutionLabel, isHdr10Label } from '../utils'
 import HD4kBanner from '../../public/4kBanner.png'
 import hdr10PlusLogo from '../../public/HDR10+_Logo_light.svg'
-import useWatchedWidth, { isWatchedComplete } from './useWatchedWidth'
+import { useWatched, isWatchedComplete } from './useWatchedWidth'
 import { TotalRuntime } from './watched'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import RetryImage from './RetryImage'
@@ -31,7 +31,10 @@ function MediaPoster({
 
   // Determine whether to use movie or TV show data
   const _media = media || movie || tv
-  const watchedWidth = useWatchedWidth(_media.metadata, _media)
+  // One reading for the bar, the clock and the overlay: the newer of the
+  // server's object and the positions store
+  const watched = useWatched(_media.metadata, _media)
+  const watchedWidth = watched.progressPercent
 
   // Determine the poster URL for movie or TV show
   const posterURL = _media.posterURL
@@ -72,11 +75,9 @@ function MediaPoster({
       )}
       {_media.videoURL ? (
         <TotalRuntime
-          watchedSeconds={_media.watchHistory?.playbackTime ? Math.round(_media.watchHistory.playbackTime) : undefined}
+          watchedSeconds={Math.round(watched.playbackTime)}
           length={_media.duration ?? (_media.metadata?.runtime ? _media.metadata.runtime * 60000 : 0)}
           metadata={_media.metadata}
-          videoURL={_media.videoURL}
-          mediaId={_media.mediaId}
           classNames="absolute bottom-0 w-full text-center z-10 text-[0.55rem]"
         />
       ) : null}

@@ -6,11 +6,12 @@
  * Inputs are what the server now emits on every playable item: a
  * `watchHistory` object with `playbackTime` (seconds), `progressPercent` and
  * `completed` (see watchHistory/progress.js), plus the catalog `duration` in
- * milliseconds. Older payloads without the two computed fields fall back to
- * the same 95% rule locally.
+ * milliseconds. A position that arrives without the two computed fields (a
+ * row from the positions store, a tab's live position) gets them from the
+ * server's own function, against the surface's runtime.
  */
 
-import { WATCH_COMPLETION_PERCENT } from '@src/utils/watchHistory/progress'
+import { computeWatchProgress, WATCH_COMPLETION_PERCENT } from '@src/utils/watchHistory/progress'
 
 const pad = (n) => String(n).padStart(2, '0')
 
@@ -92,14 +93,11 @@ export function readProgress({ watchHistory = null, playbackTime = null, duratio
       : 0
   const runtime = Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null
 
-  let progressPercent
-  if (Number.isFinite(watchHistory?.progressPercent) && watchHistory.progressPercent > 0) {
-    progressPercent = watchHistory.progressPercent
-  } else if (position > 0 && runtime) {
-    progressPercent = Math.max(0, Math.min(100, Math.round((position / (runtime / 1000)) * 1000) / 10))
-  } else {
-    progressPercent = 0
-  }
+  // One rule for every client: the function the server computes the percentage with
+  const progressPercent =
+    Number.isFinite(watchHistory?.progressPercent) && watchHistory.progressPercent > 0
+      ? watchHistory.progressPercent
+      : computeWatchProgress(position, runtime).progressPercent
 
   const completed =
     typeof watchHistory?.completed === 'boolean'

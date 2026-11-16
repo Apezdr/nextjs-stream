@@ -106,6 +106,7 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
       durationMs: durationMsFrom(e),
       videoURL: e.videoURL || null,
       mediaId: isDurableMediaId(e.mediaId) ? e.mediaId : null,
+      normalizedVideoId: e.normalizedVideoId || null,
       chips: episodeRowChips(e),
       hrefs: { info: h.episode, play: h.play },
       watchHistory: plainWatchHistory(e.watchHistory),
@@ -192,6 +193,7 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
             <ActionRow
               videoURL={ep.videoURL}
               mediaId={ep.mediaId || null}
+              normalizedVideoId={ep.normalizedVideoId || null}
               durationMs={durationMsFrom(ep)}
               playHref={hrefs.play}
               noun={nextUpNoun(nextUp, 'season')}

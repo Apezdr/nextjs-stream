@@ -99,10 +99,11 @@ const Card = ({
   // the popup shows progress for any movie or episode.
   watchHistory = null,
   duration = null,
-  // Durable 'mid:…' identity — the localStorage mirror's key, which is what
-  // keeps the bar moving between rail refreshes.
+  // The title's two identities, as the rail's payload carries them: the
+  // durable 'mid:…' id and the hash of its file. The positions store finds the
+  // title by them (which keeps the bar moving between rail refreshes), and a
+  // live session with no mediaId yet is matched by the hash.
   durableMediaId = null,
-  // The URL-hash identity, for matching a live session that has no mediaId yet
   normalizedVideoId = null,
 }) => {
   const [imageDimensions, setImageDimensions] = useState({
@@ -140,11 +141,12 @@ const Card = ({
 
   // Progress under the poster — only where a single position exists (a movie
   // or an episode, not a whole show) and only on the Continue Watching rail.
-  // Live: the newer of the rail's server object and the local mirror.
+  // Live: the newer of the rail's server object and the positions store.
   const progressEligible = canShowProgress({ type, seasonNumber, episodeNumber })
   const progress = useLiveProgress({
     watchHistory,
     mediaId: durableMediaId,
+    normalizedVideoId,
     durationMs: durationMsFrom({ duration, metadata }),
     enabled: progressEligible,
   })
@@ -743,6 +745,7 @@ const Card = ({
             watchHistory={watchHistory}
             duration={duration}
             durableMediaId={durableMediaId}
+            normalizedVideoId={normalizedVideoId}
             onOpenArr={handleOpenArr}
           />,
           document.body

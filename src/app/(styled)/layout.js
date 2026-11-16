@@ -13,6 +13,7 @@ import GeneralLayout from '@components/HOC/GeneralLayout'
 import MovieLayout from '@components/HOC/MovieLayout'
 import CastBootstrap from '@components/Cast/CastBootstrap'
 import CastPositionMirror from '@components/Cast/CastPositionMirror'
+import PlaybackStoreUser from '@components/WatchProgress/PlaybackStoreUser'
 import { getSession } from '@src/lib/cachedAuth'
 
 const inter = Inter({ subsets: ['latin'] })
@@ -71,16 +72,25 @@ async function CastBootstrapFromEnv() {
 }
 
 /**
- * The Cast position mirror, for the user this document is rendered for: its
- * reports name them, and the server refuses one once the browser's session
- * is someone else's (src/lib/playbackUser.ts). The layout stays across client
- * navigations, so this is the document's user until the next full load.
+ * The two parts of every page that act for the user this document is
+ * rendered for, and are told who that is:
+ * - the Cast position mirror, whose reports name them;
+ * - the positions store (WatchProgress/playbackStore.js), whose requests
+ *   name them, and which holds nothing for a document rendered for no one.
+ * The server refuses either once the browser's session is someone else's
+ * (src/lib/playbackUser.ts). The layout stays across client navigations, so
+ * this is the document's user until the next full load.
  */
-async function CastPositionMirrorForSession() {
+async function PlaybackForSession() {
   // Request time only, like the View-as banner: the session check reads the clock
   await connection()
   const session = await getSession()
-  return <CastPositionMirror userId={session?.user?.id ?? null} />
+  return (
+    <>
+      <CastPositionMirror userId={session?.user?.id ?? null} />
+      <PlaybackStoreUser userId={session?.user?.id ?? null} />
+    </>
+  )
 }
 
 export default function styledLayout({ children }) {
@@ -94,9 +104,9 @@ export default function styledLayout({ children }) {
             <CastBootstrapFromEnv />
           </Suspense>
         }
-        castMirror={
+        playbackForSession={
           <Suspense>
-            <CastPositionMirrorForSession />
+            <PlaybackForSession />
           </Suspense>
         }
       >

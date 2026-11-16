@@ -109,6 +109,7 @@ export default async function TVShowSeasonsList({ showTitle, show = null, userId
           episodeNumber: ep.episodeNumber,
           videoURL: ep.videoURL ?? null,
           mediaId: ep.mediaId ?? null,
+          normalizedVideoId: ep.normalizedVideoId ?? null,
           durationMs: durationMsFrom(ep),
           watchHistory: epHistory,
         },
@@ -169,6 +170,7 @@ export default async function TVShowSeasonsList({ showTitle, show = null, userId
               <PrimaryPlayButton
                 videoURL={ep.videoURL}
                 mediaId={ep.mediaId || null}
+                normalizedVideoId={ep.normalizedVideoId || null}
                 durationMs={durationMsFrom(ep)}
                 playHref={hrefs.play}
                 noun={nextUpNoun(nextUp, 'show')}

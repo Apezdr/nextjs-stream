@@ -1,6 +1,6 @@
 'use client'
 import { useSyncExternalStore, ViewTransition } from 'react'
-import useWatchedWidth, { isWatchedComplete } from './useWatchedWidth'
+import { useWatched, isWatchedComplete } from './useWatchedWidth'
 import Image from 'next/image'
 import { TotalRuntime } from './watched'
 import { ArrowPathIcon } from '@heroicons/react/20/solid'
@@ -13,7 +13,8 @@ export default function TVShowThumbnail({ episode, metadata, viewTransitionName 
     () => true,
     () => false
   )
-  const watchedWidth = useWatchedWidth(metadata, episode)
+  const watched = useWatched(metadata, episode)
+  const watchedWidth = watched.progressPercent
 
   const baseURL = 'https://image.tmdb.org/t/p/'
   const imageSize = 'w780'
@@ -41,11 +42,9 @@ export default function TVShowThumbnail({ episode, metadata, viewTransitionName 
       )}
       {episode.duration && (
         <TotalRuntime
-          watchedSeconds={episode.watchHistory?.playbackTime ? Math.round(episode.watchHistory.playbackTime) : undefined}
+          watchedSeconds={Math.round(watched.playbackTime)}
           length={episode.duration ?? (episode.metadata?.runtime ? episode.metadata.runtime * 60000 : 0)}
           metadata={episode.metadata}
-          videoURL={episode.videoURL}
-          mediaId={episode.mediaId}
           classNames="absolute bottom-0 w-full text-center z-[10] text-[0.55rem]"
         />
       )}

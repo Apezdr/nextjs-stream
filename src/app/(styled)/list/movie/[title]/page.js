@@ -7,6 +7,7 @@ import {
   MovieDetailsView,
 } from '@src/components/MediaPages/DynamicPage'
 import MoviePageSkeleton from '@src/components/MediaPages/details/MoviePageSkeleton'
+import TitlePlaybackSeed from '@src/components/WatchProgress/TitlePlaybackSeed'
 import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
 import { movieDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTags'
@@ -94,7 +95,16 @@ export default function MovieDetailPage({ params }) {
     <Suspense fallback={<MoviePageSkeleton />}>
       <SessionGate params={params} callbackUrl={({ title }) => `/list/movie/${title}`}>
         {({ session, params: { title } }) => (
-          <MovieDetailContent title={title} scopeId={session.access.id} />
+          <>
+            <MovieDetailContent title={title} scopeId={session.access.id} />
+            {/* The one per-viewer read of this page: where this viewer is in
+                the movie, for the button, the panel and the bar that the
+                cached content above cannot fill in. After the content and in
+                its own boundary, so nothing waits for it. */}
+            <Suspense fallback={null}>
+              <TitlePlaybackSeed parsedParams={buildParsedParams(title)} session={session} />
+            </Suspense>
+          </>
         )}
       </SessionGate>
     </Suspense>

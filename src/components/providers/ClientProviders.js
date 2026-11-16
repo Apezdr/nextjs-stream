@@ -12,7 +12,7 @@ import Av1DecodeCheck from '@components/VideoPreview/Av1DecodeCheck'
  * Handles all the context providers that require client-side rendering.
  * better-auth does not require a session provider wrapper.
  */
-export default function ClientProviders({ children, castBootstrap = null, castMirror = null }) {
+export default function ClientProviders({ children, castBootstrap = null, playbackForSession = null }) {
   return (
     <NotificationProvider>
       <SystemStatusProvider>
@@ -26,12 +26,13 @@ export default function ClientProviders({ children, castBootstrap = null, castMi
               reading it here would make this whole wrapper wait for a request
               (see the (styled) layout). */}
           {castBootstrap}
-          {/* Records the receiver's progress while a session is live — from
-              here rather than the watch page, because the session outlives any
-              page and so must its reporter. A node, like the bootstrap: it
-              names the user this document was rendered for, a request-time
-              value (see the (styled) layout). */}
-          {castMirror}
+          {/* Two parts that act for the user this document was rendered for:
+              the Cast mirror, which records the receiver's progress while a
+              session is live (from here rather than the watch page, because
+              the session outlives any page and so must its reporter), and the
+              positions store's user. A node, like the bootstrap: who the user
+              is is a request-time value (see the (styled) layout). */}
+          {playbackForSession}
           {/* Asks the browser whether it plays AV1, once per page load. Here
               because this wrapper is on every page that shows hover previews
               and is loaded with the page; the preview player is not, and its

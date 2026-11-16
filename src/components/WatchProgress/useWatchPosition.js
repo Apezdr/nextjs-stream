@@ -1,53 +1,61 @@
 'use client'
 
-import useSWR from 'swr'
-import { fetcher } from '@src/utils'
-import useLiveProgress from './useLiveProgress'
-
-/** Server re-read cadence; the local mirror covers the gaps at 5 s. */
-export const POSITION_REFRESH_MS = 15000
+import { useEffect } from 'react'
+import { playbackStore } from './playbackStore'
+import { pickProgress, usePlaybackTitle } from './useLiveProgress'
 
 /**
- * This viewer's position in one title, for the details page.
+ * This viewer's position in one title, for the surfaces that must know
+ * whether there is one: the primary button's label, the resume panel, the
+ * sticky bar's progress line.
  *
- * The details subtree is cached for everyone (`'use cache'`), so nothing
- * per-user can render on the server; every surface that needs the position
- * (the resume panel, the primary button's label, the sticky bar's progress
- * line) calls this hook instead. They share one SWR key, so the network
- * cost is one request per page regardless of how many surfaces read it.
- *
- * The per-title endpoint resolves by URL, hash and durable mediaId and
- * carries `completed` / `progressPercent`; it is re-read every 15 s and on
- * focus so a film playing on the Shield moves the bar here. The local
- * mirror (useLiveProgress) fills the first paint and the seconds between.
+ * On a movie or episode details page the subtree is cached for everyone
+ * (`'use cache'`), so nothing per-user renders on the server. The answer
+ * comes from the positions store (playbackStore.js): the snapshot when the
+ * title is among the viewer's recent ones, the seed the page's own render
+ * handed in (PlaybackSeed), or else one request for this title, made by the
+ * store once however many surfaces ask. Nothing is polled.
  *
  * A page that already joined the viewer's watch history on the server (the
  * show and season pages render per user) passes that object as
- * `watchHistory`: it stands in until the endpoint answers, so the first
- * paint already reads the right position instead of "Play".
+ * `watchHistory`: it is the answer, the store only overlays something newer,
+ * and nothing is asked.
  *
- * @param {{ videoURL: string|null, mediaId?: string|null, durationMs?: number|null, watchHistory?: Object|null }} options
- * @returns {{ progress: ReturnType<typeof useLiveProgress>, settled: boolean }}
+ * `settled` is false while the answer is still on its way: a surface says
+ * nothing about progress until then, so it never says "Play" and then
+ * "Resume". `unknown` is true when the answer could not be had (the read
+ * failed, or was refused: `refusal` is then the status): that is not "no
+ * progress", and a surface that shows progress should say so.
+ *
+ * @param {Object} options
+ * @param {string|null} [options.mediaId] - durable 'mid:…' identity
+ * @param {string|null} [options.normalizedVideoId] - the hash of the title's file, as the server gave it
+ * @param {string|null} [options.videoURL] - what the one request for this title names it by, beside its id; never a key
+ * @param {number|null} [options.durationMs]
+ * @param {Object|null} [options.watchHistory]
+ * @returns {{ progress: ReturnType<typeof pickProgress>, settled: boolean, unknown: boolean, refusal: number|null }}
  */
-export default function useWatchPosition({ videoURL, mediaId = null, durationMs = null, watchHistory = null }) {
-  const key = videoURL ? `/api/authenticated/sync/playback?videoId=${encodeURIComponent(videoURL)}` : null
-  const { data, error, isLoading } = useSWR(key, fetcher, {
-    revalidateOnFocus: true,
-    refreshInterval: POSITION_REFRESH_MS,
-    dedupingInterval: 5000,
-  })
+export default function useWatchPosition({
+  mediaId = null,
+  normalizedVideoId = null,
+  videoURL = null,
+  durationMs = null,
+  watchHistory = null,
+}) {
+  const mid = mediaId ?? watchHistory?.mediaId ?? null
+  const nid = normalizedVideoId ?? watchHistory?.normalizedVideoId ?? null
+  const seeded = watchHistory !== null
+  const title = usePlaybackTitle(mid, nid)
 
-  const server =
-    data && data.found
-      ? {
-          playbackTime: data.playbackTime,
-          progressPercent: data.progressPercent,
-          completed: data.completed,
-          lastWatched: data.lastUpdated,
-        }
-      : watchHistory
+  useEffect(() => {
+    if (!seeded) playbackStore.want({ mediaId: mid, normalizedVideoId: nid, videoURL })
+  }, [seeded, mid, nid, videoURL])
 
-  const progress = useLiveProgress({ watchHistory: server, mediaId, videoURL, durationMs })
-
-  return { progress, settled: !key || data !== undefined || Boolean(error) || !isLoading }
+  return {
+    progress: pickProgress({ watchHistory, entry: title.entry, durationMs }),
+    // With no identity there is nothing to wait for
+    settled: seeded || !(mid || nid) || title.answer !== 'pending',
+    unknown: !seeded && title.answer === 'unknown',
+    refusal: title.refusal,
+  }
 }

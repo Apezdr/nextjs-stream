@@ -36,6 +36,7 @@ export const SYNOPSIS_PLACEHOLDER = 'Episode synopsis will appear here.'
  * @property {number|null} durationMs
  * @property {string|null} videoURL
  * @property {string|null} mediaId - durable 'mid:…' identity, or null
+ * @property {string|null} normalizedVideoId - the hash of the episode's file, or null
  * @property {string[]} chips - quality chips plus 'CC'
  * @property {{ info: string, play: string }} hrefs
  * @property {Object} watchHistory - the server's watch-history object
@@ -46,8 +47,8 @@ export const SYNOPSIS_PLACEHOLDER = 'Episode synopsis will appear here.'
  * One episode of a season, as a list row or a grid card.
  *
  * The row is a client component because its status line and the bar under
- * the still are live: the server's `watchHistory` seeds them, and the local
- * mirror keeps them moving while the episode plays elsewhere. The title link
+ * the still are live: the server's `watchHistory` seeds them, and the
+ * positions store keeps them moving while the episode plays elsewhere. The title link
  * is the row's one tab stop; the still links too, for the pointer, but is
  * hidden from the tab order and assistive tech so the row is not two links.
  *
@@ -57,7 +58,7 @@ export default function EpisodeRow({ episode, view = 'list', onActions }) {
   const progress = useLiveProgress({
     watchHistory: episode.watchHistory,
     mediaId: episode.mediaId,
-    videoURL: episode.videoURL,
+    normalizedVideoId: episode.normalizedVideoId,
     durationMs: episode.durationMs,
   })
   const status = episodeStatusLine(progress)
