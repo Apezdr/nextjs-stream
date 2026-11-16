@@ -153,6 +153,98 @@ it('keeps a fresh answer across a quick navigation, and does not ask again for i
   expect(fetchImpl).toHaveBeenCalledTimes(1)
 })
 
+describe('a session a tab of this browser ended', () => {
+  // The player's tab: its end and the next page's poll leave together
+  const WEB = { id: 'row-web', sessionId: 'web-session', state: 'playing', mediaId: 'mid:film', position: 1200 }
+  const TV = { id: 'row-tv', sessionId: 'tv-session', state: 'playing', mediaId: 'mid:film', position: 600 }
+  const listing = (...sessions) => async () => answer({ sessions, asOf: new Date(clock).toISOString() })
+
+  it('is left out of an answer that got in before its end did, and the other sessions stay', async () => {
+    fetchImpl.mockImplementation(listing(WEB, TV))
+    store.ended('web-session')
+
+    const listener = jest.fn()
+    store.subscribe(listener)
+    await settle()
+
+    expect(store.getSnapshot().sessions).toEqual([TV])
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('is nothing live when it was the only session listed, and no surface is told anything', async () => {
+    fetchImpl.mockImplementation(listing(WEB))
+    store.ended('web-session')
+
+    const listener = jest.fn()
+    store.subscribe(listener)
+    await settle()
+
+    expect(store.getSnapshot()).toBe(NOTHING)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('leaves the answer held at once, and the observer hears it', async () => {
+    fetchImpl.mockImplementation(listing(WEB, TV))
+    const listener = jest.fn()
+    const observer = jest.fn()
+    store.observe(observer)
+    store.subscribe(listener)
+    await settle()
+    expect(store.getSnapshot().sessions).toEqual([WEB, TV])
+    listener.mockClear()
+
+    store.ended('web-session')
+
+    expect(store.getSnapshot().sessions).toEqual([TV])
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(observer).toHaveBeenLastCalledWith({ sessions: [TV], offsetMs: 0 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('is not brought back by an answer that was already on its way', async () => {
+    let respond
+    fetchImpl.mockImplementation(() => new Promise((resolve) => (respond = resolve)))
+    store.subscribe(() => {})
+    clock += 200
+    store.ended('web-session')
+
+    respond(answer({ sessions: [WEB], asOf: new Date(clock).toISOString() }))
+    await settle()
+
+    expect(store.getSnapshot()).toBe(NOTHING)
+  })
+
+  it('is listed again by an answer asked for a poll later: the end never reached the server', async () => {
+    fetchImpl.mockImplementation(listing(WEB))
+    store.subscribe(() => {})
+    await settle()
+    await tick(2_000)
+    store.ended('web-session')
+    expect(store.getSnapshot()).toBe(NOTHING)
+
+    // 13 s after the end: still the end's word against the answer's
+    await tick(POLL_MS - 2_000)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(store.getSnapshot()).toBe(NOTHING)
+
+    // 28 s after: the row is still there, so its own expiry decides
+    await tick(POLL_MS)
+    expect(store.getSnapshot().sessions).toEqual([WEB])
+  })
+
+  it('says nothing about a session with no id', async () => {
+    fetchImpl.mockImplementation(listing(WEB))
+    store.subscribe(() => {})
+    await settle()
+
+    store.ended(null)
+    store.ended('')
+    store.ended(undefined)
+
+    expect(store.getSnapshot().sessions).toEqual([WEB])
+  })
+})
+
 describe('an observer (a reader that must not cause a poll)', () => {
   it('starts no poll and keeps none going', async () => {
     const observer = jest.fn()

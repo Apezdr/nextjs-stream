@@ -1096,6 +1096,33 @@ describe('the viewer’s own sessions on other devices (the presence store, obse
     expect(read(store).entry).toMatchObject({ source: 'row', playbackTime: 600 })
   })
 
+  it('the presence store is told which session stopped, in the tab that played it and in the others', async () => {
+    const mine = { ...fakePresence(), ended: jest.fn() }
+    const theirs = { ...fakePresence(), ended: jest.fn() }
+    const a = tab('tab-a', { presence: mine })
+    const b = tab('tab-b', { presence: theirs })
+    a.store.identify(USER)
+    b.store.identify(USER)
+    a.store.reportPosition({ userId: USER, ...FILM, playbackTime: 1200, sessionId: 'web-session' })
+    expect(mine.ended).not.toHaveBeenCalled()
+
+    a.store.reportEnded({ userId: USER, ...FILM, playbackTime: 1234, sessionId: 'web-session' })
+
+    expect(mine.ended).toHaveBeenCalledTimes(1)
+    expect(mine.ended).toHaveBeenCalledWith('web-session')
+    expect(theirs.ended).toHaveBeenCalledTimes(1)
+    expect(theirs.ended).toHaveBeenCalledWith('web-session')
+  })
+
+  it('a player that stopped without a session id tells the presence store nothing', () => {
+    const presence = { ...fakePresence(), ended: jest.fn() }
+    const { store } = tab('tab-a', { presence })
+    store.identify(USER)
+    store.reportPosition({ userId: USER, ...FILM, playbackTime: 1200 })
+    store.reportEnded({ userId: USER, ...FILM, playbackTime: 1234 })
+    expect(presence.ended).not.toHaveBeenCalled()
+  })
+
   it('trigger 4: a session that disappears asks for the snapshot, its last position being on the server', async () => {
     const presence = fakePresence()
     const { store, conditionalFetch } = tab('tab-a', { presence })

@@ -3,7 +3,7 @@
 import { fetchWithETag } from '@src/utils/conditionalFetch'
 import { playbackReadHeaders } from '@src/lib/playbackUser'
 import { isOnTitle, livePosition } from '@src/utils/playbackPresence/rules'
-import { observeOwnLiveSessions } from '@components/WatchingNow/ownSessions'
+import { observeOwnLiveSessions, ownSessionEnded } from '@components/WatchingNow/ownSessions'
 
 /** The channel every tab of this browser shares. A change to a message's shape takes a new name. */
 export const PLAYBACK_CHANNEL = 'nextjs-stream.playback.v1'
@@ -142,7 +142,7 @@ function randomId() {
  * @param {() => Document|null} [options.getDocument]
  * @param {() => Window|null} [options.getWindow]
  * @param {(name: string) => BroadcastChannel|null} [options.createChannel]
- * @param {{ observe: (observer: (answer: { sessions: Array<Object>, offsetMs: number }) => void) => unknown }|null} [options.presence]
+ * @param {{ observe: (observer: (answer: { sessions: Array<Object>, offsetMs: number }) => void) => unknown, ended?: (sessionId: string) => void }|null} [options.presence] - the presence store: heard through `observe`, and told through `ended` which sessions the tabs of this browser ended
  * @param {() => number} [options.now] - ms, for intervals only
  * @param {string} [options.tabId]
  */
@@ -567,6 +567,13 @@ export function createPlaybackStore({
     setLive({ mediaId, normalizedVideoId, playbackTime: position, paused: true, sessionId }, fromTab, true)
   }
 
+  // The presence surfaces are told which session stopped: the end and their
+  // poll leave together, and an answer that got in first would show the
+  // session playing until the next one
+  function sessionEnded(sessionId) {
+    if (text(sessionId)) presence?.ended?.(sessionId)
+  }
+
   function applyChanged(keys) {
     let dropped = false
     for (const title of Array.isArray(keys) ? keys : []) {
@@ -590,6 +597,7 @@ export function createPlaybackStore({
       setLive({ ...title, playbackTime: message.playbackTime, paused: message.paused === true }, message.tabId)
     } else if (message.type === 'ended') {
       endLive({ ...title, playbackTime: message.playbackTime }, message.tabId)
+      sessionEnded(title.sessionId)
       invalidate()
     } else if (message.type === 'changed') {
       applyChanged(message.keys)
@@ -649,6 +657,7 @@ export function createPlaybackStore({
     if (keys.length === 0) return
     outbox.delete(keys[0])
     endLive({ mediaId, normalizedVideoId, playbackTime, sessionId }, tabId)
+    sessionEnded(sessionId)
     post({
       type: 'ended',
       mediaId: isDurable(mediaId) ? mediaId : null,
@@ -726,4 +735,4 @@ export function createPlaybackStore({
  * every request and must hold nothing, so only effects and event handlers
  * (which run in the browser) ever write to it.
  */
-export const playbackStore = createPlaybackStore({ presence: { observe: observeOwnLiveSessions } })
+export const playbackStore = createPlaybackStore({ presence: { observe: observeOwnLiveSessions, ended: ownSessionEnded } })

@@ -40,6 +40,9 @@ function browserFetch(...args) {
  * - `observe` is for a reader that must not cause a poll (the positions
  *   store, WatchProgress/playbackStore.js): it is told each answer while a
  *   surface is polling, and nothing live once the last surface is gone.
+ * - A session a tab of this browser ended itself (`ended`) is not shown on an
+ *   answer's word for one poll: the end and a poll leave together when a
+ *   player closes, and the poll can be answered first.
  *
  * A factory so tests get their own; the app uses the one below.
  *
@@ -58,6 +61,19 @@ export function createOwnSessionsStore({
   let timer = null
   const listeners = new Set()
   const observers = new Set()
+  // The sessions a tab of this browser ended, and when: sessionId -> ms
+  const endedHere = new Map()
+
+  // What an answer asked for at `askedAt` may list. Not a session ended here,
+  // until an answer is asked for a whole poll after the end: by then the end
+  // has reached the server, or it was lost and the row's own expiry decides.
+  function withoutEnded(sessions, askedAt) {
+    for (const [sessionId, endedAt] of endedHere) {
+      if (askedAt - endedAt >= pollMs) endedHere.delete(sessionId)
+    }
+    if (endedHere.size === 0) return sessions
+    return sessions.filter((session) => !endedHere.has(session?.sessionId))
+  }
 
   // An observer starts no poll, so what it is told is only as good as the
   // polling: with no surface mounted nobody is asking, and nothing is known
@@ -97,6 +113,7 @@ export function createOwnSessionsStore({
   function poll() {
     if (refused) return Promise.resolve()
     if (inflight) return inflight
+    const askedAt = now()
     inflight = (async () => {
       try {
         const res = await fetchImpl(PRESENCE_URL, {
@@ -114,7 +131,8 @@ export function createOwnSessionsStore({
         const body = await res.json()
         answeredAt = now()
         const asOf = Date.parse(body?.asOf)
-        settle(Array.isArray(body?.sessions) ? body.sessions : [], Number.isFinite(asOf) ? asOf - answeredAt : 0)
+        const sessions = withoutEnded(Array.isArray(body?.sessions) ? body.sessions : [], askedAt)
+        settle(sessions, Number.isFinite(asOf) ? asOf - answeredAt : 0)
       } catch {
         answeredAt = 0
         set(NOTHING)
@@ -171,10 +189,33 @@ export function createOwnSessionsStore({
     return () => observers.delete(observer)
   }
 
-  return { subscribe, getSnapshot: () => snapshot, poll, observe }
+  /**
+   * A tab of this browser ended `sessionId`: its player closed, or a cast
+   * took the title over. The session leaves the answer held at once, and an
+   * answer asked for within a poll of this does not bring it back.
+   */
+  function ended(sessionId) {
+    if (typeof sessionId !== 'string' || sessionId === '') return
+    // Bounded: a tab ends a handful of sessions in its life
+    if (endedHere.size >= 64) endedHere.delete(endedHere.keys().next().value)
+    endedHere.set(sessionId, now())
+    if (snapshot.sessions.some((session) => session?.sessionId === sessionId)) {
+      settle(
+        snapshot.sessions.filter((session) => session?.sessionId !== sessionId),
+        snapshot.offsetMs
+      )
+    }
+  }
+
+  return { subscribe, getSnapshot: () => snapshot, poll, observe, ended }
 }
 
 const ownSessions = createOwnSessionsStore()
+
+/** A tab of this browser ended one of the viewer's sessions. See `ended` above. */
+export function ownSessionEnded(sessionId) {
+  ownSessions.ended(sessionId)
+}
 
 /** The app's own sessions, for a reader that must not cause a poll. See `observe` above. */
 export function observeOwnLiveSessions(observer) {
