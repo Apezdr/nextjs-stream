@@ -161,10 +161,13 @@ export function createOwnSessionsStore({
   /**
    * Hears every answer without asking for one: `observer` is called with
    * `{ sessions, offsetMs }` when the answer changes and when polling starts,
-   * and with nothing live when it stops. Returns the unsubscribe.
+   * and with nothing live when it stops. One that starts observing while a
+   * surface is polling is told the answer held, at once. Returns the
+   * unsubscribe.
    */
   function observe(observer) {
     observers.add(observer)
+    if (listeners.size > 0) observer(snapshot)
     return () => observers.delete(observer)
   }
 

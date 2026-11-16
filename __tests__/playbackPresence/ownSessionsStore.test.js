@@ -177,6 +177,18 @@ describe('an observer (a reader that must not cause a poll)', () => {
     expect(store.getSnapshot().sessions).toHaveLength(1)
   })
 
+  it('one that starts observing while a surface is polling is told the answer held, and causes no request', async () => {
+    store.subscribe(() => {})
+    await settle()
+    const observer = jest.fn()
+
+    store.observe(observer)
+
+    expect(observer).toHaveBeenCalledTimes(1)
+    expect(observer).toHaveBeenLastCalledWith({ sessions: [SESSION], offsetMs: 300_000 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('hears the kept answer again when a surface returns inside a poll, with no request made', async () => {
     const observer = jest.fn()
     store.observe(observer)
