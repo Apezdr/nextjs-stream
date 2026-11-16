@@ -1,95 +1,145 @@
-import { signedInGate } from '@src/lib/roles/gates'
+import { approvedGate } from '@src/lib/roles/gates'
 import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { findPlaybackForUser } from '@src/utils/watchHistory/database'
 import { watchRowsInScope } from '@src/utils/watchHistory/scopeRows'
-import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
-import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
+import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
+import { resolveMediaIdForNid, resolveTitleForMediaId } from '@src/utils/watchHistory/mediaIdResolver'
 import { computeWatchProgress } from '@src/utils/watchHistory/progress'
+import { isDurableMediaId } from '@src/utils/watchHistory/resolve'
+import { createLogger } from '@src/lib/logger'
+
+const log = createLogger('API.PlaybackPosition')
+
+const json = (status, body) =>
+  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+// What a position read needs of a row: never the device or the addresses
+const ROW_FIELDS = { _id: 0, videoId: 1, normalizedVideoId: 1, mediaId: 1, playbackTime: 1, lastUpdated: 1 }
+
+const writtenAt = (row) => new Date(row.lastUpdated || 0).getTime()
+
+/** The user's most recently written row matching the filter, or null. One indexed read. */
+async function newestRow(userId, filter) {
+  const rows = await findPlaybackForUser(userId, { filter, projection: ROW_FIELDS })
+  return rows.reduce((newest, row) => (!newest || writtenAt(row) > writtenAt(newest) ? row : newest), null)
+}
 
 /**
- * Get playback position for a specific video (on-demand fetch)
- * Used when video player loads and the video isn't in recent sync cache
+ * GET /api/authenticated/sync/playback?videoId=<url>&mediaId=<mid:…>
+ *
+ * The caller's position in one title, read now. Give the title by the URL it
+ * plays from (`videoId`), by its durable id (`mediaId`, 'mid:…'), or both.
+ *
+ *   { found, playbackTime, lastUpdated, completed, progressPercent,
+ *     videoId, mediaId, normalizedVideoId, asOf }
+ *
+ * `found: false` means the read was made and there is no row: `playbackTime`
+ * is 0 and `completed` false. A read that could not be made is a 500, never
+ * that. `asOf` is the server's clock at the read, to set against `lastUpdated`
+ * and a save's `savedAt`, which are the server's too.
+ *
+ * The row is found by index, without loading the user's history:
+ *   1. the hash of `videoId` ({userId, normalizedVideoId})
+ *   2. the durable id ({userId, mediaId}): the one asked for, or the one the
+ *      catalog gives for the URL. This is the row a quality swap or a rename
+ *      left under the old file's hash.
+ *   3. asked by `mediaId` alone: the hash of the file the title plays today,
+ *      for a row that was never stamped with the id
+ *   4. the raw `videoId` string, last, for a row from before URLs were
+ *      hashed the way they are now. The only arm with no index of its own,
+ *      and it runs only when the others found nothing.
+ *
+ * A row flagged isValid:false is returned like any other. The flag is the
+ * sync saying it could not match the row to a title; a read that has just
+ * matched it to one by hash or id knows better, and a client told "no row"
+ * would start the title from 0 and save over the position.
  */
 export async function GET(req) {
-  const authResult = await signedInGate.route()
-  if (authResult instanceof Response) {
-    return authResult
+  const user = await approvedGate.route()
+  if (user instanceof Response) {
+    return user
   }
 
   const { searchParams } = new URL(req.url)
-  const videoId = searchParams.get('videoId')
+  const videoId = searchParams.get('videoId') || null
+  const mediaId = searchParams.get('mediaId') || null
 
-  if (!videoId) {
-    return new Response(
-      JSON.stringify({ error: 'videoId parameter required' }),
-      { status: 400, headers: { 'Content-Type': 'application/json' } }
-    )
+  if (!videoId && !mediaId) {
+    return json(400, { error: 'videoId or mediaId parameter required' })
+  }
+  if (mediaId && !isDurableMediaId(mediaId)) {
+    return json(400, { error: 'mediaId must be a durable id (mid:…)' })
   }
 
-  // The user's own rows
-  const watchedMedia = (await findPlaybackForUser(authResult.id)) ?? []
-  
-  // Normalize the requested videoId for matching
-  const normalizedVideoId = generateNormalizedVideoId(videoId)
+  const normalizedVideoId = videoId ? generateNormalizedVideoId(videoId) : null
 
-  // Find playback position for this specific video
-  let playbackData = watchedMedia.find(
-    item =>
-      item.videoId === videoId ||
-      item.normalizedVideoId === normalizedVideoId
-  )
+  // The catalog's word on the title (cached, fail-open): its durable id and
+  // its runtime, for the completion flag
+  const byUrl = normalizedVideoId ? await resolveMediaIdForNid(normalizedVideoId) : null
+  if (mediaId && byUrl && byUrl.mediaId !== mediaId) {
+    return json(400, { error: 'mediaId and videoId name different titles' })
+  }
+  // Asked by id, and the URL (if any) is not a file the catalog knows
+  const byId = mediaId && !byUrl ? await resolveTitleForMediaId(mediaId) : null
+  const durableId = mediaId ?? byUrl?.mediaId ?? null
+  const durationMs = byUrl?.durationMs ?? byId?.durationMs ?? null
 
-  // The catalog identity for this URL (cached, fail-open): the durable
-  // 'mid:…' for the rename-proof fallback below, and the runtime for the
-  // completion flag the web player uses on an Activity re-show.
-  const resolved = await resolveMediaIdForNid(normalizedVideoId)
-
-  // Rename-proof fallback: no row is keyed under this URL/nid (e.g. the file
-  // was re-encoded or renamed, so its nid changed). Take the newest row
-  // stamped with the durable identity. Additive only — the exact URL/nid
-  // matches above always win, and a null resolution degrades gracefully.
-  if (!playbackData) {
-    if (resolved?.mediaId) {
-      playbackData = watchedMedia
-        .filter(item => item.mediaId === resolved.mediaId)
-        .sort(
-          (a, b) => new Date(b.lastUpdated || 0).getTime() - new Date(a.lastUpdated || 0).getTime()
-        )[0] || null
+  let row = null
+  try {
+    if (normalizedVideoId) {
+      row = await newestRow(user.id, { normalizedVideoId })
     }
+    if (!row && durableId) {
+      row = await newestRow(user.id, { mediaId: durableId })
+    }
+    if (!row && byId?.normalizedVideoId && byId.normalizedVideoId !== normalizedVideoId) {
+      row = await newestRow(user.id, { normalizedVideoId: byId.normalizedVideoId })
+    }
+    if (!row && videoId) {
+      row = await newestRow(user.id, { videoId })
+    }
+
+    // A title outside the user's library scope has no position to give: the
+    // check reads that one row's title, nothing more
+    if (row) {
+      const [kept] = await watchRowsInScope([row], await libraryAccessFor(user))
+      row = kept ?? null
+    }
+  } catch (error) {
+    // Never "no row": a client that believed it would start from 0 and save over the position
+    log.error({ err: error, userId: user.id }, 'Failed to read the playback position')
+    return json(500, { error: 'Failed to read the playback position' })
   }
 
-  // A title outside the user's library scope has no position to give: the
-  // check reads that one row's title, nothing more
-  if (playbackData) {
-    const [kept] = await watchRowsInScope([playbackData], await libraryAccessFor(authResult))
-    playbackData = kept ?? null
+  const asOf = new Date().toISOString()
+
+  if (!row) {
+    return json(200, {
+      videoId,
+      playbackTime: 0,
+      lastUpdated: null,
+      completed: false,
+      progressPercent: 0,
+      found: false,
+      mediaId,
+      normalizedVideoId,
+      asOf,
+    })
   }
 
-  if (!playbackData) {
-    return new Response(
-      JSON.stringify({
-        videoId,
-        playbackTime: 0,
-        lastUpdated: null,
-        completed: false,
-        progressPercent: 0,
-        found: false
-      }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
-    )
-  }
+  const playbackTime = row.playbackTime || 0
+  const progress = computeWatchProgress(playbackTime, durationMs)
 
-  const progress = computeWatchProgress(playbackData.playbackTime || 0, resolved?.durationMs ?? null)
-
-  return new Response(
-    JSON.stringify({
-      videoId: playbackData.videoId,
-      playbackTime: playbackData.playbackTime || 0,
-      lastUpdated: playbackData.lastUpdated,
-      completed: progress.completed,
-      progressPercent: progress.progressPercent,
-      found: true
-    }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
-  )
+  return json(200, {
+    videoId: row.videoId,
+    playbackTime,
+    lastUpdated: row.lastUpdated,
+    completed: progress.completed,
+    progressPercent: progress.progressPercent,
+    found: true,
+    // The row's own keys, the ones a positions snapshot row carries
+    mediaId: isDurableMediaId(row.mediaId) ? row.mediaId : null,
+    normalizedVideoId: row.normalizedVideoId ?? null,
+    asOf,
+  })
 }

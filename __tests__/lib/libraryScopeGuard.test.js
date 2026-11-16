@@ -45,7 +45,8 @@ const NO_VIEWER = {
   'src/utils/jit/overrides.js': 'reads only the JIT serve override of a document already resolved for the viewer',
   'src/utils/jit/transcoderAdmin.js': 'admin transcoder discovery: the jitUrl bases, no titles',
   'src/utils/watchHistory/mediaIdResolver.js':
-    'maps a stream URL to its mediaId and runtime for the watch-history write path; sends no title',
+    'maps a stream URL to its mediaId and runtime for the watch-history write path, and a mediaId to its file’s hash ' +
+    'and runtime for the per-title read (sync/playback), which cuts the row it finds to the viewer’s scope; sends no title',
   'src/utils/notifications/utils/MediaDataEnricher.js':
     'enriches notifications the reader’s scope already cut (notificationDatabase.js, notifications/scope.js)',
   'src/lib/arr/catalog.ts':
