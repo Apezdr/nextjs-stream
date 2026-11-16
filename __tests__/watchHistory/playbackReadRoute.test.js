@@ -9,7 +9,10 @@
  * its durable id as well as by its URL. What every caller read before is
  * pinned first; then the new arm, the completion flag and its runtime, the
  * rows the sync flagged, who gets in (the TV and phone apps sign in with a
- * Bearer token), and that a failed read is never "no row".
+ * Bearer token), that a failed read is never "no row", and that a browser
+ * names the user its page was rendered for: a cookie request whose session
+ * is someone else's by now, or that names no one, is refused and reads
+ * nothing.
  */
 const fs = require('fs')
 const path = require('path')
@@ -37,6 +40,7 @@ const mockLog = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jes
 jest.mock('@src/lib/logger', () => ({ __esModule: true, createLogger: () => mockLog }))
 
 const { GET } = require('@src/app/api/authenticated/sync/playback/route')
+const { PLAYBACK_USER_HEADER, PLAYBACK_USER_MISMATCH, PLAYBACK_USER_REQUIRED } = require('@src/lib/playbackUser')
 const { generateNormalizedVideoId } = require('@src/utils/videoIdentity')
 const { _resetMediaIdResolverCacheForTests } = require('@src/utils/watchHistory/mediaIdResolver')
 const { FULL_LIBRARY } = require('@src/lib/roles/libraryScope')
@@ -84,7 +88,10 @@ const seed = (...rows) => col('WatchHistory').docs.push(...rows)
 
 const signedIn = (user = { id: USER, approved: true }) => ({ user, session: { token: 'tok', userId: user.id } })
 
-async function get(query, headers = { cookie: COOKIE }) {
+// A browser's request: its cookie, and the user its page was rendered for
+const browser = (userId = USER) => ({ cookie: COOKIE, [PLAYBACK_USER_HEADER]: userId })
+
+async function get(query, headers = browser()) {
   mockRequestHeaders = new Headers(headers)
   return GET(new Request(`${BASE}?${new URLSearchParams(query)}`, { headers }))
 }
@@ -432,12 +439,75 @@ describe('who gets in', () => {
     expect((await get({ videoId: MOVIE_URL }, { authorization: 'Bearer wrong' })).status).toBe(401)
   })
 
-  it('a browser tab from before this change still reads: the page’s user is not asked for here yet', async () => {
-    // Such a tab sends its cookie and no X-Playback-User header
-    const response = await get({ videoId: MOVIE_URL }, { cookie: COOKIE })
+})
 
-    expect(response.status).toBe(200)
-    expect((await response.json()).found).toBe(true)
+describe('the page’s user', () => {
+  beforeEach(() => seed(row()))
+  const reads = () => jest.spyOn(col('WatchHistory'), 'find')
+
+  it('a cookie request that names no user is refused (400) and reads nothing: a tab from before this change, until it reloads', async () => {
+    const find = reads()
+
+    for (const headers of [{ cookie: COOKIE }, { cookie: COOKIE, [PLAYBACK_USER_HEADER]: '' }]) {
+      const response = await get({ videoId: MOVIE_URL }, headers)
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual(PLAYBACK_USER_REQUIRED)
+    }
+    expect(find).not.toHaveBeenCalled()
+  })
+
+  it('a cookie request from another account’s page is refused (409) and reads nothing', async () => {
+    const find = reads()
+    // The page was rendered for USER; the cookie is OTHER's now, who has a row for the same title
+    seed(row({ userId: OTHER, playbackTime: 4000 }))
+    mockGetSession.mockResolvedValue(signedIn({ id: OTHER, approved: true }))
+
+    for (const query of [{ videoId: MOVIE_URL }, { mediaId: MOVIE_MID }]) {
+      const response = await get(query, browser(USER))
+      expect(response.status).toBe(409)
+      const body = await response.json()
+      expect(body).toEqual(PLAYBACK_USER_MISMATCH)
+      expect(body).not.toHaveProperty('playbackTime')
+    }
+    expect(find).not.toHaveBeenCalled()
+    // Both ids, never an email
+    expect(mockLog.warn).toHaveBeenCalledWith(
+      { userId: OTHER, expectedUserId: USER, path: '/api/authenticated/sync/playback' },
+      expect.any(String)
+    )
+  })
+
+  it('a cookie request that names the session’s user reads their row', async () => {
+    expect(await read({ videoId: MOVIE_URL }, browser(USER))).toMatchObject({ found: true, playbackTime: 1800 })
+  })
+
+  it('a Bearer request needs no header, and one it carries is not looked at: the token is the identity', async () => {
+    mockGetSession.mockImplementation(async ({ headers }) =>
+      headers.get('authorization') === 'Bearer device-token' ? signedIn() : null
+    )
+
+    for (const headers of [
+      { authorization: 'Bearer device-token' },
+      { authorization: 'Bearer device-token', [PLAYBACK_USER_HEADER]: OTHER },
+    ]) {
+      const response = await get({ videoId: MOVIE_URL }, headers)
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ found: true, playbackTime: 1800 })
+    }
+  })
+
+  it('the gate answers first: a signed-out or unapproved caller is told that, whatever it names', async () => {
+    mockGetSession.mockResolvedValue(null)
+    expect((await get({ videoId: MOVIE_URL }, { cookie: COOKIE })).status).toBe(401)
+
+    mockGetSession.mockResolvedValue(signedIn({ id: USER, approved: false }))
+    expect((await get({ videoId: MOVIE_URL }, { cookie: COOKIE })).status).toBe(403)
+  })
+
+  it('the check comes before the parameters: a request that names no one learns nothing about them', async () => {
+    const response = await get({}, { cookie: COOKIE })
+    expect(response.status).toBe(400)
+    expect((await response.json()).error).toBe('PLAYBACK_USER_REQUIRED')
   })
 })
 

@@ -1,5 +1,6 @@
 import { approvedGate } from '@src/lib/roles/gates'
 import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
+import { refusePlaybackUserMismatch } from '@src/lib/playbackUser'
 import { readTitlePosition } from '@src/utils/watchHistory/titlePosition'
 import { isDurableMediaId } from '@src/utils/watchHistory/resolve'
 import { createLogger } from '@src/lib/logger'
@@ -26,12 +27,23 @@ const json = (status, body) =>
  * How the row is found, and why a row the sync flagged is returned like any
  * other, is in readTitlePosition (src/utils/watchHistory/titlePosition.js):
  * the same read a details page's server render makes for its seed.
+ *
+ * A browser names the user its page was rendered for (X-Playback-User), as on
+ * the positions snapshot and every playback write, and a cookie request whose
+ * session is someone else's is refused: 409, or 400 when it names no one
+ * (src/lib/playbackUser.ts). The page plays from this answer and keeps it in
+ * memory by title: answered for whoever holds the cookie now, it would start
+ * one account's title at another's position. A Bearer client (the TV and
+ * phone apps) is exempt: its token is its identity.
  */
 export async function GET(req) {
   const user = await approvedGate.route()
   if (user instanceof Response) {
     return user
   }
+
+  const mismatch = refusePlaybackUserMismatch(req, user.id, log)
+  if (mismatch) return mismatch
 
   const { searchParams } = new URL(req.url)
   const videoId = searchParams.get('videoId') || null

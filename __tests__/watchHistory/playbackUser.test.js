@@ -54,6 +54,7 @@ const {
   PLAYBACK_USER_REQUIRED,
   MISSING_USER_WARN_EVERY_MS,
   playbackWriteHeaders,
+  playbackReadHeaders,
   refusePlaybackUserMismatch,
 } = require('@src/lib/playbackUser')
 const updatePlayback = require('@src/app/api/authenticated/sync/updatePlayback/route')
@@ -313,6 +314,74 @@ describe('guards: the browser’s playback writes', () => {
     for (const route of ['updatePlayback', path.join('presence', 'end'), 'updateValidationStatus']) {
       const source = read('src', 'app', 'api', 'authenticated', 'sync', route, 'route.js')
       expect([route, /const mismatch = refusePlaybackUserMismatch\(req, authResult\.id, log\)\n\s+if \(mismatch\) return mismatch/.test(source)]).toEqual([route, true])
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Guards: every browser playback read names its page's user too. What a read
+// answers is held in memory by title (the positions store) or played from
+// (the player's start position): answered for whoever holds the cookie now,
+// it would be another account's.
+
+const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1')
+/** A read route named in code: by its path, or by the constant the store keeps it in. */
+const PLAYBACK_READ = /sync\/positions|sync\/playback\b/
+/** A request call, by any of the names the readers make one under. */
+const REQUEST_CALL = /\b(?:fetch|conditionalFetch|fetchImpl)\(/
+/** A request whose first argument is a read route. */
+const READ_REQUEST = /^\s*(?:POSITIONS_URL|`\$\{PLAYBACK_URL\}|`\/api\/authenticated\/sync\/(?:positions|playback))/
+
+describe('guards: the browser’s playback reads', () => {
+  const readers = clientFiles()
+    .map((file) => ({ file: path.relative(ROOT, file).split(path.sep).join('/'), code: stripComments(fs.readFileSync(file, 'utf8')) }))
+    .filter(({ code }) => PLAYBACK_READ.test(code) && REQUEST_CALL.test(code))
+
+  it('are these, and each names the user its page was rendered for', () => {
+    expect(readers.map(({ file }) => file).sort()).toEqual([
+      'src/components/MediaPlayer/resumePosition.js', // the player, asking where to start
+      'src/components/WatchProgress/playbackStore.js', // the positions snapshot, and one title's position
+    ])
+    const requests = { 'src/components/MediaPlayer/resumePosition.js': 1, 'src/components/WatchProgress/playbackStore.js': 2 }
+    for (const { file, code } of readers) {
+      const reads = code.split(REQUEST_CALL).slice(1).filter((call) => READ_REQUEST.test(call))
+      expect([file, reads.length]).toEqual([file, requests[file]])
+      for (const call of reads) {
+        // Each request's own options name the page's user
+        expect([file, /^[^)]*?\{[^)]*?\bheaders: playbackReadHeaders\(userId\)/.test(call)]).toEqual([file, true])
+      }
+    }
+  })
+
+  it('the header is the one the routes read, and a page rendered for no one names no one', () => {
+    expect(playbackReadHeaders(USER)).toEqual({ Accept: 'application/json', 'X-Playback-User': USER })
+    expect(playbackReadHeaders(null)).toEqual({ Accept: 'application/json' })
+    expect(playbackReadHeaders('')).toEqual({ Accept: 'application/json' })
+    expect(Object.keys(playbackReadHeaders(USER))).toContain(PLAYBACK_USER_HEADER)
+  })
+
+  it('the user comes from the render: the layout’s session for the store, the page’s gate for its seed, the player’s session for its start', () => {
+    const layout = read('src', 'app', '(styled)', 'layout.js')
+    expect(layout).toMatch(/<PlaybackStoreUser userId=\{session\?\.user\?\.id \?\? null\} \/>/)
+    expect(read('src', 'components', 'WatchProgress', 'PlaybackStoreUser.js')).toMatch(/playbackStore\.identify\(userId\)/)
+    const seed = read('src', 'components', 'WatchProgress', 'TitlePlaybackSeed.js')
+    expect(seed).toMatch(/const userId = session\?\.user\?\.id/)
+    expect(seed).toMatch(/<PlaybackSeed\s+userId=\{userId\}/)
+    const player = read('src', 'components', 'MediaPlayer', 'MainVideoPlayer.jsx')
+    expect(player).toMatch(/useResumePosition\(\{[^}]*userId: playbackUserId,/)
+    // The store never takes a user from the browser: no storage, no cookie, no session hook
+    const store = stripComments(read('src', 'components', 'WatchProgress', 'playbackStore.js'))
+    expect(store).not.toMatch(/localStorage|sessionStorage|document\.cookie|useSession|authClient/)
+  })
+
+  it('every route a browser playback read goes to checks the user, after its gate', () => {
+    const routes = [
+      ['positions/route.ts', /const user = await approvedGate\.route\(\)[\s\S]*?const mismatch = refusePlaybackUserMismatch\(request, user\.id, log\)\n\s+if \(mismatch\) return mismatch/],
+      ['playback/route.js', /const user = await approvedGate\.route\(\)[\s\S]*?const mismatch = refusePlaybackUserMismatch\(req, user\.id, log\)\n\s+if \(mismatch\) return mismatch/],
+    ]
+    for (const [route, checked] of routes) {
+      const source = read('src', 'app', 'api', 'authenticated', 'sync', ...route.split('/'))
+      expect([route, checked.test(source)]).toEqual([route, true])
     }
   })
 })
