@@ -3,6 +3,7 @@ import { ObjectId } from 'mongodb'
 import { randomBytes } from 'node:crypto'
 import { userQueries } from '@src/lib/userQueries'
 import { forgetUserSessions } from '@src/lib/authSessionStore'
+import { deletePlaybackForUser } from '@src/utils/watchHistory/database'
 
 /**
  * Account deletion utility functions
