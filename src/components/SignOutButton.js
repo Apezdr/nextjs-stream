@@ -2,6 +2,7 @@
 
 import { authClient } from '@src/lib/auth-client'
 import { hardNavigate } from '@src/utils/hardNavigate'
+import { clearPlaybackMirror } from '@components/SyncClientWithServerWatched'
 import { classNames } from '../utils'
 
 const SignOutButton = ({
@@ -11,8 +12,14 @@ const SignOutButton = ({
   const handleSignOut = async () => {
     await authClient.signOut({
       fetchOptions: {
-        // A full load, not router.push: see hardNavigate for what survives otherwise
-        onSuccess: () => hardNavigate('/'),
+        onSuccess: () => {
+          // The positions this browser mirrors are keyed by title, not by
+          // user: left behind, they are the next account's bars and resume
+          // points here, and get saved into its history
+          clearPlaybackMirror()
+          // A full load, not router.push: see hardNavigate for what survives otherwise
+          hardNavigate('/')
+        },
       },
     })
   }
