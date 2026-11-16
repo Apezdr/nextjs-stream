@@ -77,7 +77,7 @@ function DialogBody({ user, onClose, onDeleted, pending, setPending }) {
         <div className="min-w-0">
           <DialogTitle className="text-lg font-semibold text-white">Delete {label}’s account?</DialogTitle>
           <Description className="mt-1 text-sm text-rose-200">
-            This can’t be undone. The account and its data are removed now, with no grace period.
+            This can’t be undone. The account and its data are removed now.
           </Description>
         </div>
       </div>

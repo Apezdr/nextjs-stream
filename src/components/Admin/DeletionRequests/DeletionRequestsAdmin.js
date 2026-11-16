@@ -6,7 +6,6 @@ import {
   ClockIcon,
   ExclamationTriangleIcon,
   XCircleIcon,
-  InformationCircleIcon,
   TrashIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
@@ -18,46 +17,47 @@ const REQUESTS_URL = '/api/authenticated/admin/deletion-requests'
 // The route's page size limit: the newest requests, which is what an admin acts on
 const PAGE_SIZE = 100
 
-// The statuses a request moves through (src/utils/accountDeletion.js)
+// The statuses a request moves through (src/utils/accountDeletion.js).
+//
+// Colours here have no `dark:` variants: the admin pages sit on the app's dark
+// backdrop whatever the device's theme is, and a colour that follows the
+// device left this page's title and labels dark on dark in a light theme.
 const statusConfig = {
   pending: {
     icon: ClockIcon,
-    color: 'text-yellow-600',
-    bgColor: 'bg-yellow-100',
-    label: 'Pending'
-  },
-  pending_verification: {
-    icon: InformationCircleIcon,
-    color: 'text-blue-600',
-    bgColor: 'bg-blue-100',
-    label: 'Awaiting email verification'
+    badge: 'bg-amber-400/15 text-amber-200',
+    label: 'Waiting for an admin'
   },
   processing: {
     icon: ExclamationTriangleIcon,
-    color: 'text-red-700',
-    bgColor: 'bg-red-100',
+    badge: 'bg-rose-500/20 text-rose-200',
     label: 'Started, not finished'
   },
   completed: {
     icon: CheckCircleIcon,
-    color: 'text-green-600',
-    bgColor: 'bg-green-100',
+    badge: 'bg-emerald-400/15 text-emerald-200',
     label: 'Completed'
   },
   cancelled: {
     icon: XCircleIcon,
-    color: 'text-gray-600',
-    bgColor: 'bg-gray-100',
+    badge: 'bg-white/10 text-slate-300',
     label: 'Cancelled'
   }
 }
 
 // Who asked for the deletion (the request's requestType)
 const typeLabels = {
-  authenticated: 'Requested by the user',
-  public: 'Requested by email',
+  authenticated: 'Requested by the user, signed in',
+  // Anyone can type any address into the public form, and no mail is sent to check it
+  public: 'Public form, address not verified',
   admin: 'Deleted by an admin'
 }
+
+const SECONDARY_BUTTON =
+  'inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-300 disabled:cursor-not-allowed disabled:opacity-50'
+
+const DANGER_BUTTON =
+  'inline-flex items-center justify-center rounded-xl bg-rose-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-rose-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300 disabled:cursor-not-allowed disabled:opacity-50'
 
 // The steps of a deletion, as the request names the one it stopped at
 const stepLabels = {
@@ -72,8 +72,7 @@ const stepLabels = {
 
 const auditLabels = {
   request_created: 'Requested by the user',
-  public_request_created: 'Requested by email',
-  email_verified: 'Email verified',
+  public_request_created: 'Requested on the public form',
   admin_request_created: 'Started by an admin',
   request_cancelled: 'Cancelled',
   deletion_started: 'Deletion started',
@@ -194,23 +193,20 @@ export default function DeletionRequestsAdmin() {
   if (loading && requests.length === 0) {
     return (
       <div className="flex justify-center items-center h-64" role="status" aria-label="Loading deletion requests">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-300"></div>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-md p-4" role="alert">
+      <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4" role="alert">
         <div className="flex">
-          <ExclamationTriangleIcon className="h-5 w-5 text-red-400" aria-hidden="true" />
+          <ExclamationTriangleIcon className="h-5 w-5 text-rose-300" aria-hidden="true" />
           <div className="ml-3">
-            <h3 className="text-sm font-medium text-red-800">Error</h3>
-            <p className="mt-2 text-sm text-red-700">{error}</p>
-            <button
-              onClick={fetchRequests}
-              className="mt-2 text-sm text-red-600 hover:text-red-500"
-            >
+            <h3 className="text-sm font-semibold text-rose-100">The requests could not be loaded</h3>
+            <p className="mt-2 text-sm text-rose-200">{error}</p>
+            <button onClick={fetchRequests} className={`mt-3 ${SECONDARY_BUTTON}`}>
               Try again
             </button>
           </div>
@@ -223,18 +219,19 @@ export default function DeletionRequestsAdmin() {
     <div className="space-y-6">
       <div className="sm:flex sm:items-center">
         <div className="sm:flex-auto">
-          <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
+          <h1 className="text-2xl font-semibold text-white">
             Account Deletion Requests
           </h1>
-          <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">
-            Deletions users asked for, and accounts admins deleted from the Users page.
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-300">
+            Deletions people asked for, and accounts admins deleted from the Users page. Nothing here runs on
+            its own: a request waits until an admin deletes the account or cancels the request.
           </p>
         </div>
         <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
           <button
             onClick={fetchRequests}
             disabled={loading}
-            className="inline-flex items-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
+            className={SECONDARY_BUTTON}
           >
             Refresh
           </button>
@@ -242,21 +239,21 @@ export default function DeletionRequestsAdmin() {
       </div>
 
       {total > requests.length && (
-        <p className="text-sm text-gray-700 dark:text-gray-300">
+        <p className="text-sm text-slate-300">
           Showing the newest {requests.length} of {total} requests.
         </p>
       )}
 
       {/* Status Filter Tabs */}
-      <div className="border-b border-gray-200 dark:border-gray-700">
+      <div className="border-b border-white/10">
         <nav className="-mb-px flex flex-wrap gap-x-8" aria-label="Filter by status">
           <button
             onClick={() => setFilter('all')}
             aria-pressed={filter === 'all'}
             className={`py-2 px-1 border-b-2 font-medium text-sm ${
               filter === 'all'
-                ? 'border-indigo-500 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                ? 'border-indigo-400 text-white'
+                : 'border-transparent text-slate-400 hover:border-white/30 hover:text-slate-200'
             }`}
           >
             All ({statusCounts.all})
@@ -268,8 +265,8 @@ export default function DeletionRequestsAdmin() {
               aria-pressed={filter === status}
               className={`py-2 px-1 border-b-2 font-medium text-sm ${
                 filter === status
-                  ? 'border-indigo-500 text-indigo-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-indigo-400 text-white'
+                  : 'border-transparent text-slate-400 hover:border-white/30 hover:text-slate-200'
               }`}
             >
               {config.label} ({statusCounts[status] || 0})
@@ -279,11 +276,11 @@ export default function DeletionRequestsAdmin() {
       </div>
 
       {/* Requests Table */}
-      <div className="bg-white dark:bg-gray-800 shadow overflow-hidden sm:rounded-md">
-        <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+      <div className="overflow-hidden rounded-2xl bg-slate-900/80 shadow-xl ring-1 ring-white/10">
+        <ul className="divide-y divide-white/10">
           {filteredRequests.length === 0 ? (
             <li className="px-6 py-8 text-center">
-              <p className="text-gray-500 dark:text-gray-400">
+              <p className="text-slate-400">
                 No deletion requests found.
               </p>
             </li>
@@ -294,30 +291,30 @@ export default function DeletionRequestsAdmin() {
               const isExpanded = expandedRequest === request._id
 
               return (
-                <li key={request._id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                <li key={request._id} className={isExpanded ? 'bg-white/[0.03]' : 'hover:bg-white/5'}>
                   <div className="px-6 py-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex flex-wrap items-center gap-3">
-                        <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.bgColor} ${config.color}`}>
+                        <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.badge}`}>
                           <IconComponent className="h-3 w-3 mr-1" aria-hidden="true" />
                           {config.label}
                         </div>
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                        <span className={`text-xs ${request.requestType === 'public' ? 'font-medium text-amber-200' : 'text-slate-400'}`}>
                           {typeLabels[request.requestType] || request.requestType}
                         </span>
                       </div>
 
                       <div className="flex items-center space-x-4">
-                        <div className="text-sm text-gray-900 dark:text-white">
+                        <div className="text-sm text-white">
                           {request.email || request.userId}
                         </div>
-                        <div className="text-sm text-gray-500 dark:text-gray-400">
+                        <div className="text-sm text-slate-400">
                           {when(request.requestedAt)}
                         </div>
                         <button
                           onClick={() => setExpandedRequest(isExpanded ? null : request._id)}
                           aria-expanded={isExpanded}
-                          className="text-indigo-600 hover:text-indigo-900 text-sm font-medium"
+                          className="rounded text-sm font-medium text-indigo-300 hover:text-indigo-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-300"
                         >
                           {isExpanded ? 'Hide' : 'Details'}
                           <span className="sr-only"> for {request.email || request._id}</span>
@@ -346,8 +343,8 @@ export default function DeletionRequestsAdmin() {
 function Detail({ label, children }) {
   return (
     <div>
-      <dt className="inline font-medium text-gray-700 dark:text-gray-300">{label}:</dt>
-      <dd className="inline ml-2 text-gray-600 dark:text-gray-400">{children}</dd>
+      <dt className="inline font-medium text-slate-200">{label}:</dt>
+      <dd className="inline ml-2 text-slate-300">{children}</dd>
     </div>
   )
 }
@@ -360,14 +357,14 @@ function DeletionResults({ results, finished }) {
 
   return (
     <div className="mt-4">
-      <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">{finished ? 'Removed' : 'Removed so far'}</h4>
+      <h4 className="text-sm font-medium text-white mb-2">{finished ? 'Removed' : 'Removed so far'}</h4>
       {removed.length > 0 && (
-        <p className="text-sm text-gray-600 dark:text-gray-400">
+        <p className="text-sm text-slate-300">
           {removed.map(([name, count]) => `${name}: ${count}`).join(' · ')}
         </p>
       )}
       {keptSharedPlaylists.length > 0 && (
-        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+        <p className="mt-1 text-sm text-slate-300">
           Kept, without an owner: {keptSharedPlaylists.length} list{keptSharedPlaylists.length !== 1 ? 's' : ''} shared with
           other people (<span className="font-mono">{keptSharedPlaylists.join(', ')}</span>)
         </p>
@@ -393,16 +390,16 @@ function AuditLog({ requestId, version }) {
 
   return (
     <div className="mt-4">
-      <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Audit log</h4>
-      {state.error && <p className="text-sm text-red-600">{state.error}</p>}
-      {!state.error && state.entries === null && <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>}
-      {state.entries?.length === 0 && <p className="text-sm text-gray-500 dark:text-gray-400">No entries.</p>}
+      <h4 className="text-sm font-medium text-white mb-2">Audit log</h4>
+      {state.error && <p className="text-sm text-rose-300">{state.error}</p>}
+      {!state.error && state.entries === null && <p className="text-sm text-slate-400">Loading…</p>}
+      {state.entries?.length === 0 && <p className="text-sm text-slate-400">No entries.</p>}
       {state.entries?.length > 0 && (
-        <ol className="space-y-1 text-sm text-gray-600 dark:text-gray-400">
+        <ol className="space-y-1 text-sm text-slate-300">
           {state.entries.map((entry) => (
             <li key={entry.id}>
-              <span className="text-gray-500 dark:text-gray-500">{when(entry.performedAt)}</span>{' '}
-              <span className="font-medium text-gray-800 dark:text-gray-200">{auditLabels[entry.action] || entry.action}</span>
+              <span className="text-slate-400">{when(entry.performedAt)}</span>{' '}
+              <span className="font-medium text-slate-100">{auditLabels[entry.action] || entry.action}</span>
               {entry.performedBy && <> by {entry.performedBy.name || entry.performedBy.email}</>}
               {entry.action === 'deletion_failed' && entry.details?.error && <>: {entry.details.error}</>}
             </li>
@@ -426,14 +423,14 @@ function RequestDetails({ request, onAction, actionLoading }) {
   // What the route will accept (it sends both with each request)
   const { canExecute, canCancel } = request
   const stopped = request.status === 'processing'
-  // A user's own request before its grace period is over: the admin can still delete now, knowingly
-  const endsGraceEarly = request.status === 'pending' && request.requestType !== 'admin' && !request.gracePeriodOver
+  // Made on the public form: nobody has proved the address is theirs
+  const unverified = request.requestType === 'public'
   const executeLabel = stopped ? 'Run again' : 'Delete this account now'
 
   return (
-    <div className="mt-4 border-t border-gray-200 dark:border-gray-600 pt-4">
+    <div className="mt-4 border-t border-white/10 pt-4">
       {stopped && (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800" role="alert">
+        <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100" role="alert">
           <p className="font-medium">
             This deletion started and stopped {stepLabels[request.lastError?.step] || 'part-way'}.
           </p>
@@ -445,24 +442,34 @@ function RequestDetails({ request, onAction, actionLoading }) {
         </div>
       )}
 
+      {unverified && request.status === 'pending' && (
+        <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-sm leading-relaxed text-amber-100" role="note">
+          This request came from the public form, where anyone can type any email address, and no email was
+          sent to check it. Make sure it really is from {request.email || 'the account’s owner'} before
+          deleting. The account has been told in the app and can cancel the request.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Request Details</h4>
+          <h4 className="text-sm font-medium text-white mb-2">Request Details</h4>
           <dl className="space-y-1 text-sm">
             <div>
-              <dt className="inline font-medium text-gray-700 dark:text-gray-300">ID:</dt>
-              <dd className="inline ml-2 text-gray-600 dark:text-gray-400 font-mono">{request._id}</dd>
+              <dt className="inline font-medium text-slate-200">ID:</dt>
+              <dd className="inline ml-2 text-slate-300 font-mono">{request._id}</dd>
             </div>
             <Detail label="Type">{typeLabels[request.requestType] || request.requestType}</Detail>
             {request.reason && (
               <div>
-                <dt className="font-medium text-gray-700 dark:text-gray-300">Reason:</dt>
-                <dd className="text-gray-600 dark:text-gray-400 mt-1">{request.reason}</dd>
+                <dt className="font-medium text-slate-200">Reason:</dt>
+                <dd className="text-slate-300 mt-1">{request.reason}</dd>
               </div>
             )}
             <Detail label="Requested">{when(request.requestedAt)}</Detail>
-            {request.requestType !== 'admin' && request.scheduledDeletionAt && (
-              <Detail label="Grace period ends">{when(request.scheduledDeletionAt)}</Detail>
+            {request.status === 'pending' && typeof request.waitingDays === 'number' && (
+              <Detail label="Waiting">
+                {request.waitingDays === 0 ? 'less than a day' : `${request.waitingDays} day${request.waitingDays !== 1 ? 's' : ''}`}
+              </Detail>
             )}
             {request.startedAt && <Detail label="Started">{when(request.startedAt)}</Detail>}
             {request.completedAt && <Detail label="Completed">{when(request.completedAt)}</Detail>}
@@ -476,13 +483,13 @@ function RequestDetails({ request, onAction, actionLoading }) {
         </div>
 
         <div>
-          <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Actions</h4>
+          <h4 className="text-sm font-medium text-white mb-2">Actions</h4>
           <div className="space-y-2">
             {canExecute && (
               <button
                 onClick={() => setShowActionForm('execute')}
                 disabled={actionLoading}
-                className="w-full inline-flex justify-center items-center rounded-md border border-transparent bg-red-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
+                className={`w-full ${DANGER_BUTTON}`}
               >
                 <TrashIcon className="h-4 w-4 mr-1" aria-hidden="true" />
                 {executeLabel}
@@ -492,30 +499,29 @@ function RequestDetails({ request, onAction, actionLoading }) {
               <button
                 onClick={() => setShowActionForm('cancel')}
                 disabled={actionLoading}
-                className="w-full inline-flex justify-center items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
+                className={`w-full ${SECONDARY_BUTTON}`}
               >
                 <XMarkIcon className="h-4 w-4 mr-1" aria-hidden="true" />
                 Cancel Request
               </button>
             )}
             {!canExecute && !canCancel && (
-              <p className="text-sm text-gray-500 dark:text-gray-400">Nothing more to do.</p>
+              <p className="text-sm text-slate-400">Nothing more to do.</p>
             )}
           </div>
         </div>
       </div>
 
       {showActionForm && (
-        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-md">
-          <h5 className="text-sm font-medium text-gray-900 dark:text-white mb-2">
+        <div className="mt-4 rounded-xl bg-slate-950/60 p-4 ring-1 ring-white/10">
+          <h5 className="text-sm font-medium text-white mb-2">
             {showActionForm === 'execute' ? executeLabel : 'Cancel Request'}
           </h5>
           <div className="space-y-3">
             {showActionForm === 'execute' ? (
-              <p className="text-sm text-gray-700 dark:text-gray-200">
+              <p className="text-sm leading-relaxed text-slate-200">
                 This deletes {request.email}’s account and its data now. It can’t be undone.
-                {endsGraceEarly &&
-                  ` The user has until ${when(request.scheduledDeletionAt)} to change their mind: deleting now ends that early.`}
+                {unverified && !stopped && ' Nobody has proved this request is theirs: it came from the public form.'}
               </p>
             ) : (
               <textarea
@@ -524,24 +530,20 @@ function RequestDetails({ request, onAction, actionLoading }) {
                 placeholder="Reason for this action (optional)"
                 aria-label="Reason for cancelling (optional)"
                 rows={2}
-                className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-600 dark:border-gray-500 dark:text-white sm:text-sm"
+                className="block w-full rounded-xl border-0 bg-slate-950/60 px-3 py-2 text-sm text-white ring-1 ring-inset ring-white/15 placeholder:text-slate-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
               />
             )}
             <div className="flex justify-end space-x-2">
               <button
                 onClick={() => setShowActionForm(null)}
-                className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                className={SECONDARY_BUTTON}
               >
                 Back
               </button>
               <button
                 onClick={() => handleActionSubmit(showActionForm)}
                 disabled={actionLoading}
-                className={`inline-flex items-center rounded-md border border-transparent px-3 py-2 text-sm font-medium text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 ${
-                  showActionForm === 'execute'
-                    ? 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
-                    : 'bg-gray-600 hover:bg-gray-700 focus:ring-gray-500'
-                }`}
+                className={showActionForm === 'execute' ? DANGER_BUTTON : SECONDARY_BUTTON}
               >
                 Confirm {showActionForm === 'execute' ? 'Deletion' : 'Cancellation'}
               </button>

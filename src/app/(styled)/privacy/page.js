@@ -2,6 +2,10 @@ import { siteTitle, adminUserEmails, showAdminEmails } from '@src/utils/config'
 import Link from 'next/link'
 import { headers } from 'next/headers'
 
+// When the text of this policy last changed. Change it with the text: it used
+// to be today's date on every visit, which said the policy had just changed.
+const LAST_UPDATED = 'November 16, 2026'
+
 export const metadata = {
   title: `Privacy Policy - ${siteTitle}`,
   description: 'Privacy policy for this NextJS-Stream instance',
@@ -13,11 +17,6 @@ async function PrivacyPolicy() {
   
   const hasAdminEmail = adminUserEmails && adminUserEmails.length > 0 && showAdminEmails
   const adminEmail = hasAdminEmail ? adminUserEmails[0] : null
-  const currentDate = new Date().toLocaleDateString('en-US', { 
-    year: 'numeric', 
-    month: '2-digit', 
-    day: '2-digit' 
-  })
 
   return (
     <div className="container mx-auto px-12 py-8 max-w-4xl bg-gray-800">
@@ -25,7 +24,7 @@ async function PrivacyPolicy() {
         <h1 className="text-3xl font-bold mb-6">Privacy Policy</h1>
         
         <p className="text-sm text-gray-300 mb-8">
-          <strong>Last Updated:</strong> {currentDate}
+          <strong>Last Updated:</strong> {LAST_UPDATED}
         </p>
 
         <section className="mb-8">
@@ -34,7 +33,7 @@ async function PrivacyPolicy() {
             {siteTitle} is a self-hosted media streaming application that allows users to stream and manage their personal media collections. 
             This privacy policy explains how personal information is collected, used, and protected when you use this instance of NextJS-Stream.
           </p>
-          <div className="bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400 p-4 mb-4">
+          <div className="border-l-4 border-blue-400 bg-blue-900/20 p-4 mb-4">
             <p className="text-sm">
               <strong>Important Note:</strong> NextJS-Stream is open-source software designed to be self-hosted. 
               This instance is operated independently by the instance administrator. The data handling practices described 
@@ -156,9 +155,10 @@ async function PrivacyPolicy() {
 
           <h3 className="text-xl font-medium mb-3">Data Deletion</h3>
           <ul className="list-disc pl-6 mb-4">
-            <li><strong>Account Deletion:</strong> You can request deletion of your account and associated data</li>
-            <li><strong>Grace Period:</strong> Account deletion requests have a 30-day grace period before permanent deletion</li>
-            <li><strong>Data Removal:</strong> Upon deletion, all your personal data, watch history, and preferences are permanently removed</li>
+            <li><strong>Account Deletion:</strong> You can request deletion of your account and the data stored with it, signed in or by email address</li>
+            <li><strong>How It Is Handled:</strong> An administrator carries out each request by hand. Nothing is deleted automatically and there is no fixed date; until it is carried out, a request made from your account can be cancelled there</li>
+            <li><strong>What Is Removed:</strong> Your account and its sign-in (the link to your Google or Discord account, and every signed-in device), your watch history and resume positions, your notifications, and your private lists</li>
+            <li><strong>What Is Kept:</strong> Lists you shared with other people (without an owner), requests you made for new titles in the administrators&apos; activity log, and a record of the deletion request with your email address</li>
           </ul>
 
           <h3 className="text-xl font-medium mb-3">How to Exercise Your Rights</h3>
@@ -167,13 +167,13 @@ async function PrivacyPolicy() {
             use the account deletion feature within the application.
           </p>
           
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
-            <h4 className="text-lg font-medium text-red-800 dark:text-red-200 mb-2">
+          <div className="rounded-lg border border-red-800 bg-red-900/20 p-4 mb-4">
+            <h4 className="text-lg font-medium text-red-200 mb-2">
               Request Account Deletion
             </h4>
-            <p className="text-sm text-red-700 dark:text-red-300 mb-3">
-              You can request permanent deletion of your account and all associated personal data.
-              This action is irreversible after the 30-day grace period.
+            <p className="text-sm text-red-200 mb-3">
+              You can request permanent deletion of your account and the personal data stored with it.
+              Once an administrator has carried it out, it cannot be undone.
             </p>
             <div className="flex flex-col sm:flex-row gap-2">
               <Link
@@ -182,8 +182,8 @@ async function PrivacyPolicy() {
               >
                 Request Account Deletion
               </Link>
-              <span className="text-xs text-red-600 dark:text-red-400 self-center">
-                Available for both authenticated and non-authenticated users
+              <span className="text-xs text-red-200 self-center">
+                Works whether or not you can sign in
               </span>
             </div>
           </div>
@@ -201,7 +201,7 @@ async function PrivacyPolicy() {
 
           <h3 className="text-xl font-medium mb-3">Deleted Data</h3>
           <ul className="list-disc pl-6 mb-4">
-            <li><strong>Account Deletion:</strong> All personal data is permanently deleted after the 30-day grace period</li>
+            <li><strong>Account Deletion:</strong> When an administrator carries out a deletion request, the data listed under Data Deletion is permanently deleted</li>
             <li><strong>Inactive Accounts:</strong> Retention policy determined by instance administrator</li>
             <li><strong>Logs:</strong> Administrative logs may be retained for system maintenance purposes</li>
           </ul>
@@ -259,7 +259,7 @@ async function PrivacyPolicy() {
           <p className="mb-4">
             For questions, concerns, or requests regarding this privacy policy or your personal data, please contact:
           </p>
-          <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
+          <div className="rounded-lg bg-gray-900/60 p-4 ring-1 ring-white/10">
             {hasAdminEmail ? (
               <p><strong>Instance Administrator:</strong> {adminEmail}</p>
             ) : (

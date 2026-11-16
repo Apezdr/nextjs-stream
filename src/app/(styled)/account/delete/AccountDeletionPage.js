@@ -1,37 +1,36 @@
 'use client'
 
-import { useReducer, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { ArrowLeftIcon } from '@heroicons/react/24/outline'
+import { useEffect, useReducer } from 'react'
+import DeletionPageShell, { CARD, SECONDARY_BUTTON } from '@components/DeletionRequest/DeletionPageShell'
 import DeletionRequestForm from '@components/DeletionRequest/DeletionRequestForm'
 import DeletionStatusCard from '@components/DeletionRequest/DeletionStatusCard'
 
 const DELETE_REQUEST_URL = '/api/authenticated/account/delete-request'
 
-// The whole deletion-request lifecycle (existing request, initial load, submit/error/success)
-// transitions together, so it lives in one reducer instead of five separate setState hooks.
-const initialState = {
-  existingRequest: null,
-  loading: true,
-  submitting: false,
-  error: null,
-  success: false,
-}
+// What happens to a request made here (the form numbers them)
+const STEPS = [
+  'Your request goes to the admins. Nothing is deleted yet.',
+  'An admin deletes the account by hand. There is no set date, and nothing runs on a timer.',
+  'Until then your account works as usual, and you can cancel the request on this page.',
+]
+
+// What the page knows about the user's request, and what it last did:
+//   status  'loading' | 'ready' | 'failed' (the request could not be read)
+//   request the open request, or null: the form is offered
+//   notice  what just happened, said once ('cancelled')
+const initialState = { status: 'loading', request: null, submitting: false, notice: null }
 
 function reducer(state, action) {
   switch (action.type) {
+    case 'loading':
+      return { ...state, status: 'loading' }
     case 'loaded':
       // What the server holds now: none, once a request is cancelled
-      return { ...state, existingRequest: action.request ?? null, loading: false }
-    case 'submitStart':
-      return { ...state, submitting: true, error: null }
-    case 'submitSuccess':
-      return { ...state, submitting: false, success: true }
-    case 'submitError':
-      return { ...state, submitting: false, error: action.error }
-    case 'error':
-      return { ...state, error: action.error }
+      return { ...state, status: 'ready', request: action.request ?? null, submitting: false, notice: action.notice ?? null }
+    case 'failed':
+      return { ...state, status: 'failed', submitting: false }
+    case 'submitting':
+      return { ...state, submitting: action.value, notice: null }
     default:
       return state
   }
@@ -41,220 +40,130 @@ function reducer(state, action) {
  * The signed-in user's deletion request that is still open, or null. The route
  * answers { success, data: { hasActiveRequest, request } } with their newest
  * request whatever its status: one that was cancelled is no reason to hide
- * the form.
+ * the form. Throws when the route can't be read: the page then offers neither
+ * the form nor a request it only guessed at.
  */
 async function loadOpenRequest() {
-  try {
-    const response = await fetch(DELETE_REQUEST_URL)
-    if (response.ok) {
-      const { data } = await response.json()
-      return data?.hasActiveRequest ? data.request : null
-    }
-  } catch (err) {
-    console.error('Failed to check existing request:', err)
+  const response = await fetch(DELETE_REQUEST_URL)
+  if (!response.ok) {
+    throw new Error(`The deletion request could not be read (${response.status})`)
   }
-  return null
+  const { data } = await response.json()
+  return data?.hasActiveRequest ? data.request : null
+}
+
+/** The route's own error text, or the fallback when it sent none. */
+async function errorFrom(response, fallback) {
+  const body = await response.json().catch(() => null)
+  return new Error(body?.error || fallback)
+}
+
+function LoadingCard() {
+  return (
+    <div className={CARD} role="status" aria-label="Loading your deletion request">
+      <div className="animate-pulse space-y-4">
+        <div className="h-5 w-48 rounded bg-white/10" />
+        <div className="h-4 w-full rounded bg-white/10" />
+        <div className="h-4 w-5/6 rounded bg-white/10" />
+        <div className="h-4 w-2/3 rounded bg-white/10" />
+      </div>
+    </div>
+  )
 }
 
 export default function AccountDeletionPage({ user }) {
-  const [{ existingRequest, loading, submitting, error, success }, dispatch] = useReducer(
-    reducer,
-    initialState
-  )
-  const router = useRouter()
+  const [{ status, request, submitting, notice }, dispatch] = useReducer(reducer, initialState)
 
   useEffect(() => {
     let current = true
-    loadOpenRequest().then((request) => current && dispatch({ type: 'loaded', request }))
+    loadOpenRequest()
+      .then((loaded) => current && dispatch({ type: 'loaded', request: loaded }))
+      .catch(() => current && dispatch({ type: 'failed' }))
     return () => {
       current = false
     }
   }, [])
 
-  const checkExistingRequest = async () => {
-    dispatch({ type: 'loaded', request: await loadOpenRequest() })
-  }
-
-  const handleSubmitRequest = async (formData) => {
-    dispatch({ type: 'submitStart' })
-
+  const reload = async (after = null) => {
     try {
-      const response = await fetch(DELETE_REQUEST_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          reason: formData.reason,
-        }),
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to submit deletion request')
-      }
-
-      // Read it back as the status card shows it
-      await checkExistingRequest()
-      dispatch({ type: 'submitSuccess' })
-    } catch (err) {
-      dispatch({ type: 'submitError', error: err.message })
-      throw err
+      dispatch({ type: 'loaded', request: await loadOpenRequest(), notice: after })
+    } catch {
+      dispatch({ type: 'failed' })
     }
   }
 
-  const handleCancelRequest = async (requestId, reason) => {
-    try {
-      // The route reads both from the query string
-      const query = new URLSearchParams({ requestId })
-      if (reason?.trim()) query.set('reason', reason.trim())
-      const response = await fetch(`${DELETE_REQUEST_URL}?${query}`, { method: 'DELETE' })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to cancel deletion request')
-      }
-
-      // Refresh the request status
-      await checkExistingRequest()
-    } catch (err) {
-      dispatch({ type: 'error', error: err.message })
-      throw err
-    }
+  const handleRetry = () => {
+    dispatch({ type: 'loading' })
+    reload()
   }
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-[#060916e8]">
-        <div className="h-auto flex flex-col items-center justify-center py-32 lg:py-0 sm:mt-20">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-        </div>
-      </div>
-    )
+  const handleSubmitRequest = async ({ reason }) => {
+    dispatch({ type: 'submitting', value: true })
+    const response = await fetch(DELETE_REQUEST_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    })
+    if (!response.ok) {
+      dispatch({ type: 'submitting', value: false })
+      // The form shows it
+      throw await errorFrom(response, 'The request could not be sent. Try again.')
+    }
+    // Read it back as the card shows it
+    await reload()
+  }
+
+  const handleCancelRequest = async (requestId) => {
+    // The route reads the id from the query string
+    const query = new URLSearchParams({ requestId })
+    const response = await fetch(`${DELETE_REQUEST_URL}?${query}`, { method: 'DELETE' })
+    if (!response.ok) {
+      // The card shows it
+      throw await errorFrom(response, 'The request could not be cancelled. Try again.')
+    }
+    await reload('cancelled')
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-[#060916e8]">
-      <Link href="/list" className="self-start mt-16">
-        <button
-          type="button"
-          className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-        >
-          <ArrowLeftIcon className="w-6 h-6" />
-          Back to Library
-        </button>
-      </Link>
+    <DeletionPageShell
+      backHref="/list"
+      backLabel="Back to library"
+      title="Delete your account"
+      lead={
+        <>
+          <p>Ask for your account, and what is stored with it, to be removed for good.</p>
+          <p className="mt-3 text-sm text-slate-400">
+            Signed in as <span className="font-medium text-slate-200">{user.name || user.email}</span>
+            {user.name && user.email && <span className="break-all"> ({user.email})</span>}
+          </p>
+        </>
+      }
+    >
+      {notice === 'cancelled' && (
+        <p role="status" className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">
+          The request was cancelled. Your account stays as it is.
+        </p>
+      )}
 
-      <div className="h-auto flex flex-col items-center justify-center py-32 lg:py-0 sm:mt-20 w-full max-w-4xl">
-        <div className="container mx-auto px-4 py-8">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
-              Account Deletion
-            </h1>
-            <p className="text-lg text-gray-600 dark:text-gray-400">
-              Request permanent deletion of your account and personal data
-            </p>
-          </div>
+      {status === 'loading' && <LoadingCard />}
 
-          {error && (
-            <div className="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-4">
-              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
-            </div>
-          )}
-
-          {success && !existingRequest && (
-            <div className="mb-6 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md p-4">
-              <p className="text-sm text-green-600 dark:text-green-400">
-                Your deletion request has been submitted successfully.
-              </p>
-            </div>
-          )}
-
-          {existingRequest ? (
-            <div className="space-y-6">
-              <DeletionStatusCard
-                request={existingRequest}
-                onCancel={handleCancelRequest}
-                showCancelButton={true}
-                isLoading={submitting}
-              />
-
-              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
-                <h3 className="text-lg font-medium text-blue-800 dark:text-blue-200 mb-4">
-                  Account Information
-                </h3>
-                <dl className="space-y-2">
-                  <div>
-                    <dt className="inline text-sm font-medium text-blue-700 dark:text-blue-300">Name:</dt>
-                    <dd className="inline ml-2 text-sm text-blue-600 dark:text-blue-400">{user.name}</dd>
-                  </div>
-                  <div>
-                    <dt className="inline text-sm font-medium text-blue-700 dark:text-blue-300">Email:</dt>
-                    <dd className="inline ml-2 text-sm text-blue-600 dark:text-blue-400">{user.email}</dd>
-                  </div>
-                  <div>
-                    <dt className="inline text-sm font-medium text-blue-700 dark:text-blue-300">User ID:</dt>
-                    <dd className="inline ml-2 text-sm text-blue-600 dark:text-blue-400 font-mono">{user.id}</dd>
-                  </div>
-                </dl>
-              </div>
-
-              <div className="text-center">
-                <Link
-                  href="/privacy"
-                  className="text-indigo-600 hover:text-indigo-500 text-sm font-medium"
-                >
-                  Review Privacy Policy
-                </Link>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
-                <h3 className="text-lg font-medium text-blue-800 dark:text-blue-200 mb-4">
-                  Account Information
-                </h3>
-                <p className="text-sm text-blue-700 dark:text-blue-300 mb-4">
-                  The following account will be permanently deleted:
-                </p>
-                <dl className="space-y-2">
-                  <div>
-                    <dt className="inline text-sm font-medium text-blue-700 dark:text-blue-300">Name:</dt>
-                    <dd className="inline ml-2 text-sm text-blue-600 dark:text-blue-400">{user.name}</dd>
-                  </div>
-                  <div>
-                    <dt className="inline text-sm font-medium text-blue-700 dark:text-blue-300">Email:</dt>
-                    <dd className="inline ml-2 text-sm text-blue-600 dark:text-blue-400">{user.email}</dd>
-                  </div>
-                  <div>
-                    <dt className="inline text-sm font-medium text-blue-700 dark:text-blue-300">User ID:</dt>
-                    <dd className="inline ml-2 text-sm text-blue-600 dark:text-blue-400 font-mono">{user.id}</dd>
-                  </div>
-                </dl>
-              </div>
-
-              <DeletionRequestForm
-                onSubmit={handleSubmitRequest}
-                isLoading={submitting}
-                isAuthenticated={true}
-                showEmailField={false}
-              />
-
-              <div className="text-center space-y-2">
-                <Link
-                  href="/privacy"
-                  className="block text-indigo-600 hover:text-indigo-500 text-sm font-medium"
-                >
-                  Review Privacy Policy
-                </Link>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Questions about data deletion? Contact the administrator for assistance.
-                </p>
-              </div>
-            </div>
-          )}
+      {status === 'failed' && (
+        <div className={CARD} role="alert">
+          <h2 className="text-lg font-semibold text-white">This page couldn’t load</h2>
+          <p className="mt-1.5 text-sm leading-relaxed text-slate-300">
+            Whether you already have a deletion request could not be checked, so nothing can be sent from here yet.
+          </p>
+          <button type="button" onClick={handleRetry} className={`mt-5 ${SECONDARY_BUTTON}`}>
+            Try again
+          </button>
         </div>
-      </div>
-    </div>
+      )}
+
+      {status === 'ready' && request && <DeletionStatusCard request={request} onCancel={handleCancelRequest} />}
+
+      {status === 'ready' && !request && (
+        <DeletionRequestForm onSubmit={handleSubmitRequest} isLoading={submitting} steps={STEPS} />
+      )}
+    </DeletionPageShell>
   )
 }

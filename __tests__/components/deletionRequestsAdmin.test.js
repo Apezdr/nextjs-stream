@@ -22,10 +22,22 @@ const userRequest = {
   status: 'pending',
   reason: 'moving away',
   requestedAt: '2026-11-10T12:00:00.000Z',
-  scheduledDeletionAt: '2026-12-10T12:00:00.000Z',
   canCancel: true,
   canExecute: true,
-  gracePeriodOver: false,
+  waitingDays: 6,
+}
+// Made on the public form, by email address: nobody proved the address is theirs
+const publicRequest = {
+  _id: 'r-public',
+  userId: 'u4',
+  email: 'alan@example.invalid',
+  requestType: 'public',
+  status: 'pending',
+  reason: null,
+  requestedAt: '2026-11-16T07:00:00.000Z',
+  canCancel: true,
+  canExecute: true,
+  waitingDays: 0,
 }
 const adminDeletion = {
   _id: 'r-admin',
@@ -35,13 +47,12 @@ const adminDeletion = {
   status: 'completed',
   reason: 'left the household',
   requestedAt: '2026-11-15T09:00:00.000Z',
-  scheduledDeletionAt: '2026-11-15T09:00:00.000Z',
   startedAt: '2026-11-15T09:00:00.000Z',
   completedAt: '2026-11-15T09:00:01.000Z',
   deletionResults: { session: 2, WatchHistory: 41, Notifications: 0, user: 1, keptSharedPlaylists: ['p1'] },
   canCancel: false,
   canExecute: false,
-  gracePeriodOver: true,
+  waitingDays: null,
 }
 const stoppedDeletion = {
   _id: 'r-stopped',
@@ -50,14 +61,13 @@ const stoppedDeletion = {
   requestType: 'admin',
   status: 'processing',
   requestedAt: '2026-11-16T08:00:00.000Z',
-  scheduledDeletionAt: '2026-11-16T08:00:00.000Z',
   startedAt: '2026-11-16T08:00:00.000Z',
   lastError: { step: 'lists', message: 'connection reset', at: '2026-11-16T08:00:01.000Z' },
   progress: { signOut: '2026-11-16T08:00:00.500Z', activity: '2026-11-16T08:00:00.800Z' },
   deletionResults: { session: 1, WatchHistory: 7 },
   canCancel: false,
   canExecute: true,
-  gracePeriodOver: true,
+  waitingDays: null,
 }
 
 const auditOf = {
@@ -107,15 +117,17 @@ test('lists the requests the route sends, each with who asked and where it stand
   expect(global.fetch).toHaveBeenCalledWith(`${URL_REQUESTS}?limit=100`)
   expect(screen.queryByText('No deletion requests found.')).not.toBeInTheDocument()
 
-  expect(within(rowOf('ada@example.invalid')).getByText('Pending')).toBeInTheDocument()
-  expect(within(rowOf('ada@example.invalid')).getByText('Requested by the user')).toBeInTheDocument()
+  expect(within(rowOf('ada@example.invalid')).getByText('Waiting for an admin')).toBeInTheDocument()
+  expect(within(rowOf('ada@example.invalid')).getByText('Requested by the user, signed in')).toBeInTheDocument()
   expect(within(rowOf('grace@example.invalid')).getByText('Completed')).toBeInTheDocument()
   expect(within(rowOf('grace@example.invalid')).getByText('Deleted by an admin')).toBeInTheDocument()
   expect(within(rowOf('linus@example.invalid')).getByText('Started, not finished')).toBeInTheDocument()
 
   // The tabs count the statuses requests really have
   expect(screen.getByRole('button', { name: 'All (3)' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Pending (1)' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Waiting for an admin (1)' })).toBeInTheDocument()
+  // No request waits for an email to be verified: the app sends none
+  expect(screen.queryByRole('button', { name: /verification/i })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Started, not finished (1)' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Completed (1)' })).toBeInTheDocument()
 })
@@ -162,16 +174,46 @@ test('a deletion that stopped says where, and "Run again" executes the same requ
   await waitFor(() => expect(global.fetch.mock.calls.filter(([, options]) => !options).length).toBe(2))
 })
 
-test('a user’s request within its grace period can be executed, and the page says what that ends', async () => {
+test('a waiting request says how long it has waited, and promises no date', async () => {
   const posts = fakeRoute([userRequest])
   render(<DeletionRequestsAdmin />)
   await screen.findByText('ada@example.invalid')
   const row = await openDetails('ada@example.invalid')
 
+  expect(within(row).getByText('Waiting:')).toBeInTheDocument()
+  expect(within(row).getByText('6 days')).toBeInTheDocument()
+  // Nothing runs on a timer, so nothing on the page may say one does
+  expect(document.body).not.toHaveTextContent(/grace|scheduled|days remaining/i)
+  expect(screen.getByText(/Nothing here runs on\s+its own/)).toBeInTheDocument()
+
   await click(within(row).getByRole('button', { name: 'Delete this account now' }))
 
-  expect(within(rowOf('ada@example.invalid')).getByText(/It can’t be undone\..*to change their mind: deleting now ends that early\./)).toBeInTheDocument()
+  const confirmation = within(rowOf('ada@example.invalid')).getByText(/It can’t be undone\./)
+  expect(confirmation).not.toHaveTextContent(/public form/)
   expect(actions(posts)).toEqual([])
+})
+
+test('a request from the public form is marked as unverified in the list, the details and the confirmation', async () => {
+  const posts = fakeRoute([publicRequest, userRequest])
+  render(<DeletionRequestsAdmin />)
+  await screen.findByText('alan@example.invalid')
+
+  expect(within(rowOf('alan@example.invalid')).getByText('Public form, address not verified')).toBeInTheDocument()
+
+  const row = await openDetails('alan@example.invalid')
+
+  const warning = within(row).getByRole('note')
+  expect(warning).toHaveTextContent('anyone can type any email address')
+  expect(warning).toHaveTextContent('Make sure it really is from alan@example.invalid before')
+  expect(within(row).getByText('less than a day')).toBeInTheDocument()
+
+  await click(within(row).getByRole('button', { name: 'Delete this account now' }))
+
+  expect(within(rowOf('alan@example.invalid')).getByText(/It can’t be undone\. Nobody has proved this request is theirs: it came from the public form\./)).toBeInTheDocument()
+  expect(actions(posts)).toEqual([])
+
+  await click(within(rowOf('alan@example.invalid')).getByRole('button', { name: 'Confirm Deletion' }))
+  expect(actions(posts)).toEqual([{ action: 'execute', requestId: 'r-public', reason: null }])
 })
 
 test('cancelling a request sends its id and the reason typed', async () => {

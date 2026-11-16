@@ -1,248 +1,220 @@
 'use client'
 
-import { useState } from 'react'
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import { useId, useState } from 'react'
+import Link from 'next/link'
+import { MinusIcon, XMarkIcon } from '@heroicons/react/20/solid'
+import { CARD, FIELD, FOCUS_RING, TEXT_LINK } from './DeletionPageShell'
 
-export default function DeletionRequestForm({ 
-  onSubmit, 
-  isLoading = false, 
-  isAuthenticated = false,
-  initialReason = '',
-  showEmailField = false 
-}) {
-  const [formData, setFormData] = useState({
-    reason: initialReason,
-    email: '',
-    confirmDeletion: false,
-    acknowledgeConsequences: false
-  })
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+/** What the routes accept (500 characters). */
+const MAX_REASON_LENGTH = 500
+
+// What a deletion removes and what it leaves, as src/utils/accountDeletion.js
+// does it (DELETION_STEPS). Change the two together.
+const REMOVED = [
+  'The account and its sign-in: the link to your Google or Discord account, and every browser, TV and phone signed in with it',
+  'Your watch history and resume positions',
+  'Your notifications',
+  'Your private lists and your home-screen rows',
+]
+
+const KEPT = [
+  'Lists you shared with other people, which stay without an owner, and titles you added to other people’s lists',
+  'Requests you made for new titles, in the admins’ activity log',
+  'A record of this deletion request, with your email address',
+]
+
+function Outcome({ heading, items, icon: Icon, iconClass }) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-white">{heading}</h3>
+      <ul className="mt-3 space-y-2.5 text-sm leading-relaxed text-slate-300">
+        {items.map((item) => (
+          <li key={item} className="flex gap-2.5">
+            <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${iconClass}`} aria-hidden="true" />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function FieldError({ id, children }) {
+  if (!children) return null
+  return (
+    <p id={id} role="alert" className="mt-2 text-sm text-rose-300">
+      {children}
+    </p>
+  )
+}
+
+/**
+ * The form both deletion pages use: what happens next, what a deletion
+ * removes and keeps, an optional reason, and one confirmation. The public
+ * page also asks for the account's email address (`showEmailField`).
+ *
+ * `onSubmit({ email, reason })` throws when the request fails; its message is
+ * shown above the button.
+ *
+ * @param {{ onSubmit: (data: { email: string, reason: string }) => Promise<unknown>, isLoading?: boolean, showEmailField?: boolean, steps: string[] }} props
+ *   `steps`: what happens after the request is sent, in order, each one a different sentence.
+ */
+export default function DeletionRequestForm({ onSubmit, isLoading = false, showEmailField = false, steps }) {
+  const [email, setEmail] = useState('')
+  const [reason, setReason] = useState('')
+  const [understood, setUnderstood] = useState(false)
   const [errors, setErrors] = useState({})
+  const emailId = useId()
+  const emailErrorId = useId()
+  const reasonId = useId()
+  const nextHeadingId = useId()
+  const doesHeadingId = useId()
+  const understoodId = useId()
+  const understoodErrorId = useId()
 
-  const handleInputChange = (e) => {
-    const { name, value, type, checked } = e.target
-    setFormData(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value
-    }))
-    
-    // Clear error when user starts typing/checking
-    if (errors[name]) {
-      setErrors(prev => ({ ...prev, [name]: null }))
-    }
-  }
+  const clearError = (name) => setErrors((current) => (current[name] ? { ...current, [name]: null } : current))
 
-  const validateForm = () => {
-    const newErrors = {}
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    if (isLoading) return
 
-    if (!formData.reason.trim()) {
-      newErrors.reason = 'Please provide a reason for account deletion'
-    }
-
-    if (showEmailField && !formData.email.trim()) {
-      newErrors.email = 'Email address is required'
-    }
-
-    if (showEmailField && formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      newErrors.email = 'Please enter a valid email address'
-    }
-
-    if (!formData.confirmDeletion) {
-      newErrors.confirmDeletion = 'You must confirm that you want to delete your account'
-    }
-
-    if (!formData.acknowledgeConsequences) {
-      newErrors.acknowledgeConsequences = 'You must acknowledge the consequences of account deletion'
-    }
-
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    
-    if (!validateForm()) {
-      return
-    }
+    const found = {}
+    if (showEmailField && !email.trim()) found.email = 'Enter the account’s email address.'
+    else if (showEmailField && !EMAIL.test(email.trim())) found.email = 'That doesn’t look like an email address.'
+    if (!understood) found.understood = 'Tick the box to confirm.'
+    setErrors(found)
+    if (Object.keys(found).length > 0) return
 
     try {
-      await onSubmit(formData)
+      await onSubmit({ email: email.trim(), reason: reason.trim() })
     } catch (error) {
-      setErrors({ submit: error.message || 'An error occurred while processing your request' })
+      setErrors({ submit: error?.message || 'The request could not be sent. Try again.' })
     }
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
-      {/* Warning Banner */}
-      <div className="bg-red-50 dark:bg-red-900/20 border-l-4 border-red-400 p-4 mb-6">
-        <div className="flex">
-          <div className="flex-shrink-0">
-            <ExclamationTriangleIcon className="h-5 w-5 text-red-400" aria-hidden="true" />
-          </div>
-          <div className="ml-3">
-            <h3 className="text-sm font-medium text-red-800 dark:text-red-200">
-              Account Deletion Warning
-            </h3>
-            <div className="mt-2 text-sm text-red-700 dark:text-red-300">
-              <p>
-                This action will permanently delete your account and all associated data. This includes:
-              </p>
-              <ul className="list-disc list-inside mt-2 space-y-1">
-                <li>Your viewing history and watch progress</li>
-                <li>Account preferences and settings</li>
-                <li>All personal information and profile data</li>
-                <li>Access to this streaming service</li>
-              </ul>
-              <p className="mt-2 font-medium">
-                This action cannot be undone after the 30-day grace period.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
+    <form onSubmit={handleSubmit} noValidate className={CARD}>
+      <section aria-labelledby={nextHeadingId}>
+        <h2 id={nextHeadingId} className="text-lg font-semibold text-white">
+          What happens next
+        </h2>
+        <ol className="mt-4 space-y-3 text-sm leading-relaxed text-slate-300">
+          {steps.map((step, index) => (
+            <li key={step} className="flex gap-3">
+              <span
+                aria-hidden="true"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-semibold text-white"
+              >
+                {index + 1}
+              </span>
+              <span>{step}</span>
+            </li>
+          ))}
+        </ol>
+      </section>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Email Field (for public requests) */}
+      <section aria-labelledby={doesHeadingId} className="mt-8 border-t border-white/10 pt-8">
+        <h2 id={doesHeadingId} className="text-lg font-semibold text-white">
+          What deleting the account does
+        </h2>
+        <div className="mt-4 grid gap-6 sm:grid-cols-2">
+          <Outcome heading="Removed for good" items={REMOVED} icon={XMarkIcon} iconClass="text-rose-300" />
+          <Outcome heading="Kept" items={KEPT} icon={MinusIcon} iconClass="text-slate-400" />
+        </div>
+        <p className="mt-5 text-sm leading-relaxed text-slate-400">
+          It can’t be undone. Signing in again later with the same Google or Discord account starts a new, empty
+          account.
+        </p>
+      </section>
+
+      <div className="mt-8 space-y-6 border-t border-white/10 pt-8">
         {showEmailField && (
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-              Email Address
+            <label htmlFor={emailId} className="block text-sm font-medium text-white">
+              The account’s email address
             </label>
-            <div className="mt-1">
-              <input
-                type="email"
-                name="email"
-                id="email"
-                value={formData.email}
-                onChange={handleInputChange}
-                className={`block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm ${
-                  errors.email ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''
-                }`}
-                placeholder="Enter the email address associated with your account"
-                disabled={isLoading}
-              />
-              {errors.email && (
-                <p className="mt-2 text-sm text-red-600 dark:text-red-400">{errors.email}</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Reason Field */}
-        <div>
-          <label htmlFor="reason" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Reason for Account Deletion
-          </label>
-          <div className="mt-1">
-            <textarea
-              name="reason"
-              id="reason"
-              rows={4}
-              value={formData.reason}
-              onChange={handleInputChange}
-              className={`block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm ${
-                errors.reason ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''
-              }`}
-              placeholder="Please tell us why you want to delete your account (optional but helpful for improving our service)"
+            <input
+              id={emailId}
+              type="email"
+              name="email"
+              autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value)
+                clearError('email')
+              }}
               disabled={isLoading}
+              aria-invalid={errors.email ? 'true' : undefined}
+              aria-describedby={errors.email ? emailErrorId : undefined}
+              className={`mt-2 ${FIELD}`}
             />
-            {errors.reason && (
-              <p className="mt-2 text-sm text-red-600 dark:text-red-400">{errors.reason}</p>
-            )}
-          </div>
-        </div>
-
-        {/* Confirmation Checkboxes */}
-        <div className="space-y-4">
-          <div className="flex items-start">
-            <div className="flex items-center h-5">
-              <input
-                id="confirmDeletion"
-                name="confirmDeletion"
-                type="checkbox"
-                checked={formData.confirmDeletion}
-                onChange={handleInputChange}
-                className={`focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded ${
-                  errors.confirmDeletion ? 'border-red-300' : ''
-                }`}
-                disabled={isLoading}
-              />
-            </div>
-            <div className="ml-3 text-sm">
-              <label htmlFor="confirmDeletion" className="font-medium text-gray-700 dark:text-gray-300">
-                I confirm that I want to delete my account
-              </label>
-              {errors.confirmDeletion && (
-                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.confirmDeletion}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-start">
-            <div className="flex items-center h-5">
-              <input
-                id="acknowledgeConsequences"
-                name="acknowledgeConsequences"
-                type="checkbox"
-                checked={formData.acknowledgeConsequences}
-                onChange={handleInputChange}
-                className={`focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded ${
-                  errors.acknowledgeConsequences ? 'border-red-300' : ''
-                }`}
-                disabled={isLoading}
-              />
-            </div>
-            <div className="ml-3 text-sm">
-              <label htmlFor="acknowledgeConsequences" className="font-medium text-gray-700 dark:text-gray-300">
-                I understand that this action is permanent and cannot be undone after the 30-day grace period
-              </label>
-              {errors.acknowledgeConsequences && (
-                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.acknowledgeConsequences}</p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* GDPR/CCPA Notice */}
-        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md p-4">
-          <h4 className="text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">
-            Your Privacy Rights
-          </h4>
-          <p className="text-sm text-blue-700 dark:text-blue-300">
-            Under GDPR and CCPA regulations, you have the right to request deletion of your personal data. 
-            This request will be processed in accordance with applicable privacy laws and our privacy policy.
-          </p>
-        </div>
-
-        {/* Submit Error */}
-        {errors.submit && (
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-4">
-            <p className="text-sm text-red-600 dark:text-red-400">{errors.submit}</p>
+            <FieldError id={emailErrorId}>{errors.email}</FieldError>
           </div>
         )}
 
-        {/* Submit Button */}
-        <div className="flex justify-end space-x-3">
+        <div>
+          <label htmlFor={reasonId} className="block text-sm font-medium text-white">
+            Reason <span className="font-normal text-slate-400">(optional)</span>
+          </label>
+          <textarea
+            id={reasonId}
+            name="reason"
+            rows={3}
+            maxLength={MAX_REASON_LENGTH}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            disabled={isLoading}
+            className={`mt-2 ${FIELD}`}
+          />
+        </div>
+
+        <div>
+          <div className="flex items-start gap-3">
+            <input
+              id={understoodId}
+              name="understood"
+              type="checkbox"
+              checked={understood}
+              onChange={(event) => {
+                setUnderstood(event.target.checked)
+                clearError('understood')
+              }}
+              disabled={isLoading}
+              aria-invalid={errors.understood ? 'true' : undefined}
+              aria-describedby={errors.understood ? understoodErrorId : undefined}
+              className="mt-0.5 h-4 w-4 rounded border-white/30 bg-slate-950/60 text-rose-500 focus:ring-2 focus:ring-rose-400 focus:ring-offset-2 focus:ring-offset-slate-900"
+            />
+            <label htmlFor={understoodId} className="text-sm leading-relaxed text-slate-200">
+              I understand that the account and the data listed above will be removed for good, and that this
+              can’t be undone.
+            </label>
+          </div>
+          <FieldError id={understoodErrorId}>{errors.understood}</FieldError>
+        </div>
+
+        {errors.submit && (
+          <p role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+            {errors.submit}
+          </p>
+        )}
+
+        <div className="flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <Link href="/privacy" className={`text-sm ${TEXT_LINK}`}>
+            Privacy policy
+          </Link>
           <button
             type="submit"
             disabled={isLoading}
-            className="inline-flex justify-center rounded-md border border-transparent bg-red-600 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`inline-flex items-center justify-center rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
           >
-            {isLoading ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Processing...
-              </>
-            ) : (
-              'Submit Deletion Request'
-            )}
+            {isLoading ? 'Sending…' : 'Request deletion'}
           </button>
         </div>
-      </form>
-    </div>
+      </div>
+    </form>
   )
 }
