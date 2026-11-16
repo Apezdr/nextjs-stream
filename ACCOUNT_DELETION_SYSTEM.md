@@ -156,8 +156,35 @@ Perform actions on deletion requests (admin only).
 }
 ```
 
+`execute` runs a request that has not started (`pending`) and runs again one whose
+last run stopped part-way (`processing`). A run that stops answers 500 with
+`code: "DELETION_INCOMPLETE"`; the request stays `processing` and is run again
+with the same call.
+
 #### DELETE `/api/authenticated/admin/deletion-requests?action=bulk-cancel&requestIds=<id1,id2>`
 Bulk operations on deletion requests (admin only).
+
+#### POST `/api/authenticated/admin/delete-account`
+An admin deletes an account that did not ask to be deleted (the Users page's
+"Delete account"). It records a request of type `admin` and runs it at once,
+through the same deletion as every other request. Nobody is notified.
+
+**Request Body:**
+```json
+{
+  "userId": "ObjectId",
+  "email": "the account's email, as typed into the confirmation",
+  "reason": "Optional, kept with the request"
+}
+```
+
+Refused: a caller who is not an admin, a "View as" session (403 `VIEWING_AS`),
+a missing or malformed user id (400 `INVALID_USER_ID`), an account that does
+not exist (404 `USER_NOT_FOUND`), the admin's own account (403 `OWN_ACCOUNT`),
+an admin's account (403 `TARGET_IS_ADMIN`), and an email that is not the
+account's (400 `EMAIL_MISMATCH`). A deletion that began and stopped answers 500
+`DELETION_INCOMPLETE` with the `requestId` to run again from the Deletion
+Requests page.
 
 ## Features
 
@@ -177,21 +204,56 @@ Bulk operations on deletion requests (admin only).
 4. **Audit Logging** - All actions are logged with timestamps and performer information
 5. **Token Expiration** - Verification tokens expire after 24 hours
 
+### How a Deletion Runs
+
+The databases are standalone MongoDB servers, which refuse transactions, so a
+deletion is a fixed sequence of steps (`DELETION_STEPS` in
+`src/utils/accountDeletion.js`). Each step is safe to run again, a run does all
+of them, and the request records how far it got.
+
+A request's status: `pending_verification` (public requests, until the email
+is verified), `pending`, `processing` (a deletion has started), `completed`,
+`cancelled`. It becomes `completed` only after the last step. While it is
+`processing` it holds `progress` (the steps the latest run finished),
+`deletionResults` (what every run has removed so far, per collection) and,
+after a run that stopped, `lastError` (`step`, `message`, `at`).
+
+| Step | What it does | A stop here leaves |
+|------|--------------|--------------------|
+| `signOut` | Bans the account (better-auth then refuses it a session), deletes its sessions, the "View as" sessions it opened and its device codes, then drops its cached sessions | The account banned, signed out or not, all its data intact |
+| `activity` | Watch history, the collection it was migrated from, presence, notifications, client error reports | Banned and signed out; some of these gone |
+| `lists` | Its private lists and their titles, its titles in no list, its collaborator entries, its home-screen rows | As above, and some of its lists gone |
+| `legacySignIn` | Its rows under the pre-better-auth names, where a database still has them | As above |
+| `requests` | Closes its other deletion requests, removes their verification tokens | As above |
+| `account` | Its OAuth links, then the user row, last of all | Its OAuth links gone; the user row may remain |
+
+Every filter is built from the request's user id, which is checked before
+anything is written: a request with a missing or malformed user id is refused.
+
 ### Data Deletion Scope
 
-The system deletes data from the following collections:
+**Removed**
 
-**Users Database:**
-- `AuthenticatedUsers` - User account data
-- `SSOAccounts` - Social sign-on accounts
-- `session` - User sessions
-- `authSessions` - Authentication sessions
-- `usedTokens` - Used authentication tokens
+- Users database: `user`, `session` (its own, and the "View as" sessions it
+  opened as other users), `account`, `deviceCode`, `PlaylistVisibility`,
+  `DeletionVerificationTokens` (of its requests); and, where they still exist,
+  the pre-better-auth `AuthenticatedUsers`, `SSOAccounts` (and their `_backup`
+  copies), `authSessions`, `usedTokens`
+- Media database: `WatchHistory`, `PlaybackStatus`, `PlaybackPresence`,
+  `Notifications`, `ClientErrorReports`, its private `Playlists` and the
+  `Watchlist` titles in them, and its `Watchlist` titles that are in no list
+- Its collaborator entry on other people's lists
+- Redis: its cached sessions
 
-**Media Database:**
-- `WatchHistory` - User viewing history and progress
-- `Notifications` - User notifications
-- `UserPreferences` - User preferences and settings
+**Kept**
+
+- A list it owns that other people can open or change (not private, or with
+  collaborators, or with a permission for everyone), with its titles. It stays
+  without an owner and is named in the request's `deletionResults.keptSharedPlaylists`
+- The titles it added to other people's lists (a title belongs to its list)
+- `ArrRequests`: the Radarr/Sonarr activity log, with the name it held
+- `DeletionRequests` and `DeletionAuditLog`: the record of the deletion, with
+  the account's email
 
 ### Notification System
 
@@ -232,7 +294,10 @@ Different rate limits are applied based on operation type:
 
 The system includes utilities for scheduled maintenance:
 
-1. **Daily Cleanup** - Remove expired tokens, send reminders, process automatic deletions
+1. **Daily Cleanup** - Remove expired tokens, send reminders, process automatic deletions.
+   Nothing schedules these today: `processAutomaticDeletions` and
+   `scheduleReminderNotifications` are not called from anywhere, so a request
+   whose grace period has ended is deleted when an admin executes it
 2. **Hourly Maintenance** - Clean up rate limiter memory
 3. **Health Checks** - Verify system components are working
 4. **System Statistics** - Get current system status
