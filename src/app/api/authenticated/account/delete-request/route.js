@@ -60,7 +60,8 @@ export async function POST(request) {
       data: {
         requestId: deletionRequest._id,
         status: deletionRequest.status,
-        requestedAt: deletionRequest.requestedAt
+        requestedAt: deletionRequest.requestedAt,
+        scheduledDeletionAt: deletionRequest.scheduledDeletionAt
       }
     })
 
@@ -131,6 +132,9 @@ export async function GET(request) {
           // 'public': made with the account's email on the public form, perhaps not by its owner
           requestType: currentRequest.requestType,
           requestedAt: currentRequest.requestedAt,
+          // When the server deletes the account by itself; null for a request
+          // that waits for an admin (one made on the public form)
+          scheduledDeletionAt: currentRequest.scheduledDeletionAt ?? null,
           reason: currentRequest.reason,
           canCancel: currentRequest.status === 'pending'
         }

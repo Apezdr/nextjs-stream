@@ -252,6 +252,41 @@ function createMemoryMongo() {
               }
             }
             rows = [...groups.values()]
+          } else if (stage.$sort) {
+            const entries = Object.entries(stage.$sort)
+            rows = [...rows].sort((a, b) => {
+              for (const [field, direction] of entries) {
+                const x = read(a, field)
+                const y = read(b, field)
+                if (x === y) continue
+                return (x < y ? -1 : 1) * direction
+              }
+              return 0
+            })
+          } else if (stage.$skip !== undefined) {
+            rows = rows.slice(stage.$skip)
+          } else if (stage.$limit !== undefined) {
+            rows = rows.slice(0, stage.$limit)
+          } else if (stage.$lookup) {
+            // An equality join on one field, within this database
+            const { from, localField, foreignField, as } = stage.$lookup
+            const foreign = collection(dbName, from).docs
+            rows = rows.map((row) => ({
+              ...row,
+              [as]: foreign.filter((doc) => same(read(doc, foreignField), read(row, localField))).map(clone),
+            }))
+          } else if (stage.$addFields) {
+            rows = rows.map((row) => {
+              const added = { ...row }
+              for (const [field, spec] of Object.entries(stage.$addFields)) {
+                const [source, index] = spec?.$arrayElemAt ?? []
+                if (typeof source !== 'string' || !source.startsWith('$')) throw new Error('memoryMongo: $addFields with {$arrayElemAt: ["$field", n]} only')
+                const list = read(row, source.slice(1))
+                if (Array.isArray(list) && list[index] !== undefined) added[field] = list[index]
+                else delete added[field]
+              }
+              return added
+            })
           } else {
             throw new Error(`memoryMongo: unsupported stage ${Object.keys(stage)}`)
           }

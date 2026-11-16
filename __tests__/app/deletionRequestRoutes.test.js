@@ -257,3 +257,99 @@ describe('a user cancelling a request', () => {
     expect(statusOf(ADA_REQUEST)).toBe('completed')
   })
 })
+
+describe('a signed-in user asking for their account to be deleted', () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const url = 'http://localhost/api/authenticated/account/delete-request'
+
+  test('the request is recorded with the date the server deletes the account: 30 days on', async () => {
+    requests().docs = []
+    mockSignedInGate.mockResolvedValue({ id: ADA, email: 'ada@example.invalid' })
+
+    const response = await accountRoute.POST(
+      new Request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'moving away' }) })
+    )
+
+    expect(response.status).toBe(200)
+    const [recorded] = requests().docs
+    expect(recorded).toMatchObject({ requestType: 'authenticated', status: 'pending', reason: 'moving away' })
+    expect(new Date(recorded.scheduledDeletionAt) - new Date(recorded.requestedAt)).toBe(30 * DAY)
+    const { data } = await response.json()
+    expect(new Date(data.scheduledDeletionAt).getTime()).toBe(new Date(recorded.scheduledDeletionAt).getTime())
+    // The account and the admins are told about a request that has its date
+    expect(mockEmails.sendDeletionRequestConfirmation.mock.calls[0][1].scheduledDeletionAt).toBeTruthy()
+    expect(mockEmails.sendAdminDeletionRequestNotification).toHaveBeenCalledTimes(1)
+  })
+
+  test('a second request while one is open is refused', async () => {
+    mockSignedInGate.mockResolvedValue({ id: ADA, email: 'ada@example.invalid' })
+
+    const response = await accountRoute.POST(
+      new Request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+    )
+
+    expect(response.status).toBe(409)
+    expect(requests().docs.filter((doc) => doc.userId === ADA)).toHaveLength(1)
+  })
+
+  test('their page is sent the date; a request with none (the public form’s) is sent null, not a made-up one', async () => {
+    mockSignedInGate.mockResolvedValue({ id: ADA, email: 'ada@example.invalid' })
+    const ada = requests().docs.find((doc) => doc._id === ADA_REQUEST)
+
+    ada.scheduledDeletionAt = '2026-10-31T00:00:00.000Z'
+    const dated = (await (await accountRoute.GET(new Request(url))).json()).data
+    expect(dated).toMatchObject({ hasActiveRequest: true, request: { id: ADA_REQUEST, canCancel: true } })
+    expect(new Date(dated.request.scheduledDeletionAt).toISOString()).toBe('2026-10-31T00:00:00.000Z')
+
+    delete ada.scheduledDeletionAt
+    ada.requestType = 'public'
+    const undated = (await (await accountRoute.GET(new Request(url))).json()).data
+    expect(undated.request).toMatchObject({ requestType: 'public', scheduledDeletionAt: null })
+  })
+})
+
+describe('the admin’s list', () => {
+  test('says which waiting requests the server carries out by itself, and which wait for an admin', async () => {
+    const byId = (id) => requests().docs.find((doc) => doc._id === id)
+    byId(ADA_REQUEST).scheduledDeletionAt = '2099-01-01T00:00:00.000Z'
+    byId(GRACE_REQUEST).requestType = 'public'
+
+    const response = await adminRoute.GET(new Request('http://localhost/api/authenticated/admin/deletion-requests?limit=100'))
+
+    expect(response.status).toBe(200)
+    const listed = Object.fromEntries((await response.json()).data.requests.map((request) => [request.email, request]))
+    expect(listed['ada@example.invalid']).toMatchObject({ deletesAutomatically: true, canExecute: true, canCancel: true })
+    expect(listed['grace@example.invalid']).toMatchObject({ requestType: 'public', deletesAutomatically: false, canExecute: true })
+  })
+
+  test('a request that is no longer waiting is not said to delete automatically, whatever date it carries', async () => {
+    seed({ ada: 'cancelled' })
+    requests().docs.find((doc) => doc._id === ADA_REQUEST).scheduledDeletionAt = '2020-01-01T00:00:00.000Z'
+
+    const response = await adminRoute.GET(new Request('http://localhost/api/authenticated/admin/deletion-requests?limit=100'))
+
+    const ada = (await response.json()).data.requests.find((request) => request.email === 'ada@example.invalid')
+    expect(ada).toMatchObject({ status: 'cancelled', deletesAutomatically: false, canExecute: false })
+  })
+})
+
+describe('an admin’s execute while another run holds the request', () => {
+  test('answers 409, removes nothing, and reports no failure', async () => {
+    // The hourly check picked it up a moment ago, or the admin clicked twice
+    const ada = requests().docs.find((doc) => doc._id === ADA_REQUEST)
+    ada.status = 'processing'
+    ada.runLeaseUntil = new Date(Date.now() + 5 * 60 * 1000).toISOString()
+
+    const response = await adminPost({ action: 'execute', requestId: ADA_REQUEST })
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toEqual({
+      error: 'This deletion is running right now. Refresh in a moment.',
+      code: 'DELETION_RUNNING',
+    })
+    expect(history().docs.filter((doc) => doc.userId === ADA)).toHaveLength(2)
+    expect(statusOf(ADA_REQUEST)).toBe('processing')
+    expect(mockEmails.sendDeletionFailureNotification).not.toHaveBeenCalled()
+    expect(mockEmails.sendDeletionCompletionNotification).not.toHaveBeenCalled()
+  })
+})

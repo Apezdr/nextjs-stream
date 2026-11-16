@@ -5,7 +5,8 @@ import {
   getDeletionRequestById,
   cancelDeletionRequest,
   executeAccountDeletion,
-  getDeletionAuditLogs
+  getDeletionAuditLogs,
+  DeletionNotStarted
 } from '@src/utils/accountDeletion'
 import { 
   sendDeletionCancellationConfirmation,
@@ -63,9 +64,13 @@ export async function GET(request) {
       // A request that has not started: a deletion under way can only be finished
       canCancel: request.status === 'pending',
       // What POST { action: 'execute' } accepts: a request that has not
-      // started, and one whose run stopped part-way. Nothing runs on a
-      // schedule: a request waits here until an admin acts on it
+      // started (before its date too: the admin ends the wait knowingly),
+      // and one whose run stopped part-way
       canExecute: EXECUTABLE_STATUSES.includes(request.status),
+      // The server carries it out by itself at scheduledDeletionAt
+      // (src/lib/scheduledDeletions.ts): a signed-in user's request. One
+      // from the public form has no date and waits for an admin
+      deletesAutomatically: request.status === 'pending' && Boolean(request.scheduledDeletionAt),
       // Whole days a request that has not started has waited for an admin
       waitingDays:
         request.status === 'pending' && request.requestedAt
@@ -237,6 +242,15 @@ async function handleExecuteRequest(requestId, adminId) {
       return NextResponse.json(
         { error: 'Only pending deletion requests can be executed' },
         { status: 400 }
+      )
+    }
+
+    // Another run holds it right now (the hourly check, or a second click):
+    // this call removed nothing, and nothing failed
+    if (error instanceof DeletionNotStarted && error.reason === 'running') {
+      return NextResponse.json(
+        { error: 'This deletion is running right now. Refresh in a moment.', code: 'DELETION_RUNNING' },
+        { status: 409 }
       )
     }
 

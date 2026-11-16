@@ -29,7 +29,7 @@ const mockLog = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jes
 jest.mock('@src/lib/logger', () => ({ __esModule: true, createLogger: () => mockLog }))
 
 const { ObjectId } = require('mongodb')
-const { executeAccountDeletion, DELETION_BAN_REASON } = require('@src/utils/accountDeletion')
+const { executeAccountDeletion, DeletionNotStarted, DELETION_BAN_REASON } = require('@src/utils/accountDeletion')
 const { deletePlaybackForUser } = require('@src/utils/watchHistory/database')
 
 const ADMIN = '507f1f77bcf86cd7994390ad'
@@ -511,5 +511,135 @@ describe('a deletion that stops part-way', () => {
 
     await expect(executeAccountDeletion(REQUEST, ADMIN)).rejects.toThrow('Deletion request is not in pending status')
     expect(auditActions()).toEqual(['deletion_started', 'deletion_completed'])
+  })
+})
+
+describe('one run at a time', () => {
+  const MINUTE = 60 * 1000
+
+  test('a request another run holds is refused: nothing is removed and nothing is recorded', async () => {
+    // An admin clicking twice, or the hourly check in another process
+    seed({ requestOverrides: { status: 'processing', runLeaseUntil: new Date(Date.now() + 5 * MINUTE) } })
+    const before = snapshot()
+
+    const refused = await executeAccountDeletion(REQUEST, ADMIN).catch((error) => error)
+
+    expect(refused).toBeInstanceOf(DeletionNotStarted)
+    expect(refused.reason).toBe('running')
+    expect(snapshot()).toBe(before)
+    expect(auditActions()).toEqual([])
+    expect(request().status).toBe('processing')
+  })
+
+  test('a hold left by a run whose process died runs out, and the request can be run again', async () => {
+    seed({ requestOverrides: { status: 'processing', runLeaseUntil: new Date(Date.now() - 1000) } })
+
+    await expect(executeAccountDeletion(REQUEST, ADMIN)).resolves.toMatchObject({ success: true })
+
+    expect(request().status).toBe('completed')
+  })
+
+  test('a run holds its request while it works, and lets go when it finishes', async () => {
+    const notifications = col('Media', 'Notifications')
+    const deleteMany = notifications.deleteMany
+    let heldUntil = null
+    notifications.deleteMany = (...args) => {
+      heldUntil = request().runLeaseUntil
+      return deleteMany.apply(notifications, args)
+    }
+
+    await executeAccountDeletion(REQUEST, ADMIN)
+    notifications.deleteMany = deleteMany
+
+    expect(new Date(heldUntil).getTime()).toBeGreaterThan(Date.now() + MINUTE)
+    expect(request()).not.toHaveProperty('runLeaseUntil')
+  })
+
+  test('a run that stops lets go at once, so it can be run again without waiting', async () => {
+    const restore = failOnce('Media', 'Notifications', 'deleteMany', 'connection reset')
+
+    await expect(executeAccountDeletion(REQUEST, ADMIN)).rejects.toThrow('connection reset')
+    restore()
+
+    expect(request().status).toBe('processing')
+    expect(request()).not.toHaveProperty('runLeaseUntil')
+    await expect(executeAccountDeletion(REQUEST, ADMIN)).resolves.toMatchObject({ success: true })
+  })
+})
+
+describe('the automatic run (the server’s hourly check)', () => {
+  const HOUR = 60 * 60 * 1000
+  const due = { scheduledDeletionAt: new Date(Date.now() - HOUR) }
+  const auditEntries = () => col('Users', 'DeletionAuditLog').docs
+
+  test('carries out a signed-in user’s request whose date has come, in nobody’s name', async () => {
+    seed({ requestOverrides: due })
+
+    const result = await executeAccountDeletion(REQUEST, null, { automatic: true })
+
+    expect(result.success).toBe(true)
+    expect(request()).toMatchObject({ status: 'completed', completedBy: null, completedAutomatically: true, lastRunAutomatic: true })
+    expect(auditEntries().map((entry) => [entry.action, entry.performedBy, entry.details.automatic])).toEqual([
+      ['deletion_started', null, true],
+      ['deletion_completed', null, true],
+    ])
+    for (const [key, counts] of Object.entries(census())) {
+      expect([key, counts.ada]).toEqual([key, 0])
+    }
+  })
+
+  test.each([
+    ['whose date has not come', { scheduledDeletionAt: new Date(Date.now() + HOUR) }],
+    ['that carries no date', {}],
+    // Nobody verified the address typed into the form: an admin decides, never a timer
+    ['from the public form, even were it to carry a date', { requestType: 'public', ...due }],
+    ['an admin made', { requestType: 'admin', ...due }],
+    ['an admin started and that stopped', { status: 'processing', lastRunAutomatic: false, ...due }],
+  ])('refuses a request %s, and removes nothing', async (_label, requestOverrides) => {
+    seed({ requestOverrides })
+    const before = snapshot()
+
+    const refused = await executeAccountDeletion(REQUEST, null, { automatic: true }).catch((error) => error)
+
+    expect(refused).toBeInstanceOf(DeletionNotStarted)
+    expect(refused.reason).toBe('not_due')
+    expect(snapshot()).toBe(before)
+    expect(request().status).toBe(requestOverrides.status ?? 'pending')
+    expect(auditActions()).toEqual([])
+  })
+
+  test('takes up a run of its own that stopped, and counts what it could not finish', async () => {
+    seed({ requestOverrides: due })
+    const restore = failOnce('Media', 'Notifications', 'deleteMany', 'connection reset')
+
+    await expect(executeAccountDeletion(REQUEST, null, { automatic: true })).rejects.toThrow('connection reset')
+    restore()
+
+    expect(request()).toMatchObject({ status: 'processing', lastRunAutomatic: true, automaticFailures: 1 })
+
+    await expect(executeAccountDeletion(REQUEST, null, { automatic: true })).resolves.toMatchObject({ success: true })
+    expect(auditActions()).toEqual(['deletion_started', 'deletion_failed', 'deletion_resumed', 'deletion_completed'])
+  })
+
+  test('takes no admin’s name; a run by an admin still needs one', async () => {
+    seed({ requestOverrides: due })
+    const before = snapshot()
+
+    await expect(executeAccountDeletion(REQUEST, ADMIN, { automatic: true })).rejects.toThrow('run by nobody')
+    await expect(executeAccountDeletion(REQUEST, null)).rejects.toThrow('needs the id of the admin')
+
+    expect(snapshot()).toBe(before)
+    expect(request().status).toBe('pending')
+  })
+
+  test('an admin’s run is not marked automatic, and may come before the date', async () => {
+    seed({ requestOverrides: { scheduledDeletionAt: new Date(Date.now() + 20 * 24 * HOUR) } })
+
+    await executeAccountDeletion(REQUEST, ADMIN)
+
+    expect(request()).toMatchObject({ status: 'completed', completedBy: ADMIN, completedAutomatically: false })
+    expect(auditEntries().some((entry) => entry.details.automatic)).toBe(false)
+    // A failure of an admin's run is not counted towards the automatic run's attempts
+    expect(request()).not.toHaveProperty('automaticFailures')
   })
 })

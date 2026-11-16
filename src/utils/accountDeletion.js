@@ -4,6 +4,7 @@ import { userQueries } from '@src/lib/userQueries'
 import { forgetUserSessions } from '@src/lib/authSessionStore'
 import { isAdminUser } from '@src/lib/roles/rules'
 import { deletePlaybackForUser } from '@src/utils/watchHistory/database'
+import { DELETION_REMINDER_DAYS, daysAfter, scheduledDeletionDate } from '@src/utils/deletionSchedule'
 import { createLogger } from '@src/lib/logger'
 
 const log = createLogger('AccountDeletion')
@@ -34,10 +35,10 @@ function toObjectIdOrNull(value) {
 const OPEN_STATUSES = ['pending', 'processing']
 
 /**
- * Create a deletion request for an authenticated user. The request waits for
- * an admin, who deletes the account from the Deletion Requests page: nothing
- * runs on a schedule, so the request carries no date. Until an admin starts
- * it, the user can cancel it.
+ * Create a deletion request for an authenticated user. It carries the date it
+ * is carried out automatically (scheduledDeletionAt, DELETION_GRACE_DAYS from
+ * now), by the server's hourly check (src/lib/scheduledDeletions.ts). Until
+ * then the user can cancel it, and an admin can carry it out sooner.
  * @param {string} userId - User ID requesting deletion
  * @param {string} reason - Optional reason for deletion
  * @returns {Promise<Object>} Created deletion request
@@ -71,6 +72,7 @@ export async function createAuthenticatedDeletionRequest(userId, reason = null) 
     status: 'pending',
     reason,
     requestedAt: now,
+    scheduledDeletionAt: scheduledDeletionDate(now),
     createdAt: now,
     updatedAt: now
   }
@@ -104,9 +106,11 @@ function findAccountByEmail(email) {
  * (/privacy/delete-account): the way in for someone who cannot sign in.
  *
  * Nobody has proved they own the address: the app sends no mail, so there is
- * no link to click. The request therefore waits for an admin like any other,
- * is marked as coming from the form (requestType 'public'), and the account's
- * owner is told in the app and can cancel it. The admin decides.
+ * no link to click. The request therefore carries no date and is never
+ * carried out automatically: it waits for an admin, is marked as coming from
+ * the form (requestType 'public'), and the account's owner is told in the app
+ * and can cancel it. The admin decides. Were it given a date, anyone could
+ * delete someone else's account by typing their address and waiting.
  *
  * Returns null, and records nothing, when no account has the address or its
  * deletion is already requested. The route answers the same either way:
@@ -509,6 +513,46 @@ const DELETION_STEPS = [
   ['account', deleteSignIn],
 ]
 
+/**
+ * How long a run holds its request before anyone else may run it. Each step
+ * that finishes renews it, so it only has to outlast one step; a run whose
+ * process died stops renewing, and the request is free again after this long.
+ */
+const RUN_LEASE_MS = 10 * 60 * 1000
+
+const leaseFrom = (now) => new Date(now.getTime() + RUN_LEASE_MS)
+
+/**
+ * A deletion that was refused before anything was written or removed:
+ * `reason` is 'not_found', 'not_open' (cancelled or completed), 'running'
+ * (another run holds the request right now) or 'not_due' (the automatic run
+ * was asked for a request it may not carry out).
+ */
+export class DeletionNotStarted extends Error {
+  constructor(reason, message) {
+    super(message)
+    this.name = 'DeletionNotStarted'
+    this.reason = reason
+  }
+}
+
+const notFound = () => new DeletionNotStarted('not_found', 'Deletion request not found')
+const notOpen = () => new DeletionNotStarted('not_open', 'Deletion request is not in pending status')
+
+/**
+ * Whether the automatic run may carry a request out now: one a user made
+ * while signed in, whose date has come; or one the automatic run itself
+ * started and did not finish. Never a request from the public form, whose
+ * address nobody verified, and never one an admin started.
+ */
+function isDueForAutomaticRun(request, now) {
+  if (request.status === 'processing') return request.lastRunAutomatic === true
+  if (request.status !== 'pending' || request.requestType !== 'authenticated') return false
+  if (!request.scheduledDeletionAt) return false
+  const scheduled = new Date(request.scheduledDeletionAt)
+  return !Number.isNaN(scheduled.getTime()) && scheduled <= now
+}
+
 /** What a run writes on its request as it goes. */
 function progressOn(requests, requestId) {
   const write = (update) => requests.updateOne({ _id: requestId }, update)
@@ -516,26 +560,38 @@ function progressOn(requests, requestId) {
     /** Adds to a collection's count: what earlier runs removed stays counted. */
     removed: (name, count) => write({ $inc: { [`deletionResults.${name}`]: count }, $set: { updatedAt: new Date() } }),
     note: (name, value) => write({ $set: { [`deletionResults.${name}`]: value, updatedAt: new Date() } }),
-    /** A step of this run that ran to its end. */
+    /** A step of this run that ran to its end: the run keeps its hold on the request. */
     finished: (step) => {
       const now = new Date()
-      return write({ $set: { [`progress.${step}`]: now, updatedAt: now } })
+      return write({ $set: { [`progress.${step}`]: now, runLeaseUntil: leaseFrom(now), updatedAt: now } })
     },
   }
 }
 
-/** The step a run stopped at, on the request and in the audit log. Never throws: the step's own error is what the caller hears. */
-async function recordFailure(requests, requestId, performedBy, step, error) {
+/**
+ * The step a run stopped at, on the request and in the audit log, and the
+ * request let go of so it can be run again. Never throws: the step's own error
+ * is what the caller hears.
+ */
+async function recordFailure(requests, requestId, performedBy, step, error, automatic) {
   const message = error?.message || String(error)
-  log.error({ requestId: String(requestId), step, error: message }, 'Account deletion stopped part-way; run the request again')
+  log.error({ requestId: String(requestId), step, automatic, error: message }, 'Account deletion stopped part-way; run the request again')
   try {
     const now = new Date()
-    await requests.updateOne({ _id: requestId }, { $set: { lastError: { step, message, at: now }, updatedAt: now } })
+    await requests.updateOne(
+      { _id: requestId },
+      {
+        $set: { lastError: { step, message, at: now }, updatedAt: now },
+        $unset: { runLeaseUntil: '' },
+        // The automatic run gives up after MAX_AUTOMATIC_ATTEMPTS of these
+        ...(automatic ? { $inc: { automaticFailures: 1 } } : {}),
+      }
+    )
     await createDeletionAuditLog({
       deletionRequestId: requestId,
       action: 'deletion_failed',
       performedBy,
-      details: { step, error: message },
+      details: { step, error: message, ...(automatic ? { automatic: true } : {}) },
     })
   } catch (recordError) {
     log.error({ requestId: String(requestId), step, error: recordError?.message }, 'Could not record where the account deletion stopped')
@@ -548,17 +604,27 @@ async function recordFailure(requests, requestId, performedBy, step, error) {
  * to "completed" only after the last. A request left in "processing" by a run
  * that stopped is run again with the same call, and finishes the job.
  *
+ * One run at a time holds a request (runLeaseUntil): a second caller, an admin
+ * clicking twice or the automatic check in another process, is refused with
+ * DeletionNotStarted 'running' and removes nothing.
+ *
  * @param {string|ObjectId} deletionRequestId - Deletion request ID
- * @param {string|ObjectId} performedBy - Admin user ID performing the deletion
+ * @param {string|ObjectId|null} performedBy - Admin user ID performing the deletion; null for the automatic run
+ * @param {Object} [options]
+ * @param {boolean} [options.automatic=false] - The server's own check is running it
+ *   (src/lib/scheduledDeletions.ts), nobody is: allowed only for a request
+ *   that is due (isDueForAutomaticRun), and recorded as such in the audit log
  * @returns {Promise<{ success: true, deletionResults: Object }>} What was removed, over every run of the request
  */
-export async function executeAccountDeletion(deletionRequestId, performedBy) {
+export async function executeAccountDeletion(deletionRequestId, performedBy, { automatic = false } = {}) {
   const requestId = toObjectIdOrNull(deletionRequestId)
   if (!requestId) {
-    throw new Error('Deletion request not found')
+    throw notFound()
   }
   // Who ran it goes in the audit log: refused here rather than half-way
-  if (!toObjectIdOrNull(performedBy)) {
+  if (automatic) {
+    if (performedBy != null) throw new Error('An automatic deletion is run by nobody: it takes no admin id')
+  } else if (!toObjectIdOrNull(performedBy)) {
     throw new Error('Account deletion needs the id of the admin running it')
   }
 
@@ -567,25 +633,37 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
 
   const deletionRequest = await requests.findOne({ _id: requestId })
   if (!deletionRequest) {
-    throw new Error('Deletion request not found')
+    throw notFound()
   }
   if (!OPEN_STATUSES.includes(deletionRequest.status)) {
-    throw new Error('Deletion request is not in pending status')
+    throw notOpen()
+  }
+
+  const startedAt = new Date()
+  if (automatic && !isDueForAutomaticRun(deletionRequest, startedAt)) {
+    throw new DeletionNotStarted('not_due', 'Deletion request is not due to be carried out automatically')
   }
 
   // Before anything is written or removed
   const userId = requireUserId(deletionRequest.userId)
   const resumed = deletionRequest.status === 'processing'
 
-  const startedAt = new Date()
+  // Taken in one write: open, and held by no other run. A request cancelled
+  // since it was read, or picked up by another run, does not match
   const started = await requests.updateOne(
-    { _id: requestId, status: { $in: OPEN_STATUSES } },
+    {
+      _id: requestId,
+      status: { $in: OPEN_STATUSES },
+      $or: [{ runLeaseUntil: null }, { runLeaseUntil: { $lte: startedAt } }],
+    },
     {
       $set: {
         status: 'processing',
         startedAt: deletionRequest.startedAt ?? startedAt,
         lastRunAt: startedAt,
         lastRunBy: performedBy,
+        lastRunAutomatic: automatic,
+        runLeaseUntil: leaseFrom(startedAt),
         // This run's steps; deletionResults keeps counting across runs
         progress: {},
         updatedAt: startedAt,
@@ -594,9 +672,15 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
     }
   )
   if (started.matchedCount !== 1) {
+    const current = await requests.findOne({ _id: requestId })
+    if (current && OPEN_STATUSES.includes(current.status)) {
+      throw new DeletionNotStarted('running', 'This deletion is already running')
+    }
     // Cancelled or completed since it was read
-    throw new Error('Deletion request is not in pending status')
+    throw notOpen()
   }
+
+  const audited = automatic ? { automatic: true } : {}
 
   // 'start' is the audit entry: nothing is removed before it is written
   let step = 'start'
@@ -605,7 +689,7 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
       deletionRequestId: requestId,
       action: resumed ? 'deletion_resumed' : 'deletion_started',
       performedBy,
-      details: { userId: userId.toHexString() },
+      details: { userId: userId.toHexString(), ...audited },
     })
     const { removed, note, finished } = progressOn(requests, requestId)
     for (const [name, run] of DELETION_STEPS) {
@@ -614,7 +698,7 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
       await finished(step)
     }
   } catch (error) {
-    await recordFailure(requests, requestId, performedBy, step, error)
+    await recordFailure(requests, requestId, performedBy, step, error, automatic)
     throw error
   }
 
@@ -622,7 +706,16 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
   const completedAt = new Date()
   const completed = await requests.updateOne(
     { _id: requestId, status: 'processing' },
-    { $set: { status: 'completed', completedAt, completedBy: performedBy, updatedAt: completedAt } }
+    {
+      $set: {
+        status: 'completed',
+        completedAt,
+        completedBy: performedBy,
+        completedAutomatically: automatic,
+        updatedAt: completedAt,
+      },
+      $unset: { runLeaseUntil: '' },
+    }
   )
   // What every run of the request removed, as the steps counted it
   const record = await requests.findOne({ _id: requestId })
@@ -634,7 +727,7 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
         deletionRequestId: requestId,
         action: 'deletion_completed',
         performedBy,
-        details: { deletionResults },
+        details: { deletionResults, ...audited },
       })
     } catch (auditError) {
       // The account is gone and the request says so; a lost log line is not a failed deletion
@@ -643,6 +736,79 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
   }
 
   return { success: true, deletionResults }
+}
+
+/**
+ * How many times the automatic check runs a deletion that keeps stopping
+ * before it leaves the request to an admin (the Deletion Requests page's "Run
+ * again"): one notification to the admins per attempt, not one an hour for ever.
+ */
+export const MAX_AUTOMATIC_ATTEMPTS = 5
+
+/**
+ * The requests the automatic check should carry out now, the ones it started
+ * and did not finish first (their accounts are already signed out): what
+ * isDueForAutomaticRun allows, and that no run holds at this moment.
+ *
+ * @param {Date} [now]
+ * @param {number} [limit=10] - At most this many a check: the rest wait for the next
+ * @returns {Promise<Array<Object>>} The requests
+ */
+export async function getDeletionsDueForAutomaticRun(now = new Date(), limit = 10) {
+  const client = await clientPromise
+  const requests = client.db('Users').collection('DeletionRequests')
+
+  const stopped = await requests
+    .find({
+      status: 'processing',
+      lastRunAutomatic: true,
+      $or: [{ runLeaseUntil: null }, { runLeaseUntil: { $lte: now } }],
+      // Missing counts as none: a run whose process died recorded no failure
+      $nor: [{ automaticFailures: { $gte: MAX_AUTOMATIC_ATTEMPTS } }],
+    })
+    .sort({ lastRunAt: 1 })
+    .limit(limit)
+    .toArray()
+
+  const due = await requests
+    .find({ status: 'pending', requestType: 'authenticated', scheduledDeletionAt: { $lte: now } })
+    .sort({ scheduledDeletionAt: 1 })
+    .limit(limit)
+    .toArray()
+
+  return [...stopped, ...due].slice(0, limit)
+}
+
+/**
+ * The requests whose account is due a reminder: a signed-in user's request,
+ * still waiting, to be carried out within DELETION_REMINDER_DAYS. Each is
+ * marked as reminded in the same write that finds it, so a request is handed
+ * to one caller, once.
+ *
+ * @param {Date} [now]
+ * @param {number} [limit=20]
+ * @returns {Promise<Array<Object>>} The requests to remind
+ */
+export async function claimDeletionReminders(now = new Date(), limit = 20) {
+  const client = await clientPromise
+  const requests = client.db('Users').collection('DeletionRequests')
+
+  const claimed = []
+  while (claimed.length < limit) {
+    const request = await requests.findOneAndUpdate(
+      {
+        status: 'pending',
+        requestType: 'authenticated',
+        scheduledDeletionAt: { $gt: now, $lte: daysAfter(now, DELETION_REMINDER_DAYS) },
+        reminderSentAt: null,
+      },
+      { $set: { reminderSentAt: now, updatedAt: now } },
+      { returnDocument: 'after' }
+    )
+    if (!request) break
+    claimed.push(request)
+  }
+  return claimed
 }
 
 /** A deletion an admin asked for that is refused, with a code the route turns into a status. */

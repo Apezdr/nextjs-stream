@@ -149,8 +149,20 @@ function authStartupTasks() {
   }
 }
 
+// The hourly check that carries out the account deletions that are due and
+// reminds the accounts that are close (src/lib/scheduledDeletions.ts). Node
+// only, once per process, on timers that never keep the process alive.
+function scheduledDeletions() {
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    import('@src/lib/scheduledDeletions')
+      .then(({ startScheduledDeletions }) => startScheduledDeletions())
+      .catch((error) => console.error('Scheduled account deletions did not load:', error))
+  }
+}
+
 export function register() {
   authStartupTasks()
+  scheduledDeletions()
   if (globalThis.__otelStarted) return
   // OTEL_SDK_DISABLED=true turns every signal off. @vercel/otel only checks it
   // for traces; without this the logs and metrics below would still export.
