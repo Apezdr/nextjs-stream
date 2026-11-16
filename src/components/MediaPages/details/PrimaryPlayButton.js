@@ -40,10 +40,12 @@ const labelWith = (verb, noun) => (typeof noun === 'string' && noun.length > 0 ?
  *
  * The details subtree is cached for everyone, so the label is decided on the
  * client from the same position the resume panel reads. Until that position
- * is known the button shows its icon and an empty label, in a slot as wide as
- * its widest label so nothing moves when the word arrives: it never says
- * "Play" and then "Resume". It plays either way (the player finds its own
- * place), and after PENDING_LABEL_MS without an answer it says "Play".
+ * is known the button shows its icon and no word: it never says "Play" and
+ * then "Resume". The button is as wide as its widest face from the start
+ * (all three are laid out in one grid cell, one of them visible), so nothing
+ * beside it moves when the word arrives. It plays either way (the player
+ * finds its own place), and after PENDING_LABEL_MS without an answer it says
+ * "Play".
  *
  * A page that already has the viewer's watch history on the server (the show
  * and season pages) passes it as `watchHistory`, so the first paint already
@@ -97,22 +99,36 @@ export default function PrimaryPlayButton({
     )
   }
 
-  // Every word the button can say, stacked in one grid cell: the slot is as
-  // wide as the widest, whichever one shows
-  const words = [labelWith('Play', noun), labelWith('Resume', noun), labelWith('Watch again', restartNoun)]
+  // Every face the button can wear, in one grid cell: the cell, and so the
+  // button, is as wide as the widest, and the one that shows is centred in it.
+  // While the position is on its way the Play face shows its icon and hides
+  // its word.
+  const faces = [
+    { verb: 'Play', Icon: PlayIcon, word: labelWith('Play', noun) },
+    { verb: 'Resume', Icon: PlayIcon, word: labelWith('Resume', noun) },
+    { verb: 'Watch again', Icon: ArrowPathIcon, word: labelWith('Watch again', restartNoun) },
+  ]
+  const shown = pending ? 'Play' : action.label
 
   return (
     <Link
       href={pending ? playHref : action.href}
       className={buttonClasses}
       data-primary-action={pending ? 'pending' : action.label}
-      aria-label={pending ? words[0] : label}
+      aria-label={pending ? faces[0].word : label}
     >
-      <Icon className={iconClasses} aria-hidden="true" />
-      <span className="grid justify-items-start" aria-hidden="true">
-        {words.map((word, index) => (
-          <span key={index} className={classNames('col-start-1 row-start-1', !pending && word === label ? '' : 'invisible')}>
-            {word}
+      <span className="grid justify-items-center" aria-hidden="true">
+        {faces.map((face) => (
+          <span
+            key={face.verb}
+            className={classNames(
+              'col-start-1 row-start-1 inline-flex items-center',
+              size === 'sm' ? 'gap-1.5' : 'gap-2',
+              face.verb === shown ? '' : 'invisible'
+            )}
+          >
+            <face.Icon className={iconClasses} aria-hidden="true" />
+            <span className={pending ? 'invisible' : undefined}>{face.word}</span>
           </span>
         ))}
       </span>

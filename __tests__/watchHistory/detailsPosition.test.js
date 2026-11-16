@@ -60,7 +60,14 @@ beforeEach(() => {
 
 describe('the primary button', () => {
   const button = () => screen.getByRole('link')
-  const shownWord = () => [...button().querySelectorAll('span > span')].filter((word) => !word.classList.contains('invisible')).map((word) => word.textContent)
+  // The button's faces (an icon and a word each), one grid cell deep
+  const faces = () => [...button().firstElementChild.children]
+  const shownFaces = () => faces().filter((face) => !face.classList.contains('invisible'))
+  const shownWord = () =>
+    shownFaces()
+      .map((face) => face.lastElementChild)
+      .filter((word) => !word.classList.contains('invisible'))
+      .map((word) => word.textContent)
 
   it('shows no word while the position is on its way, and still plays', () => {
     render(<PrimaryPlayButton {...title} />)
@@ -68,6 +75,9 @@ describe('the primary button', () => {
     expect(button()).toHaveAttribute('data-primary-action', 'pending')
     expect(button()).toHaveAttribute('href', PLAY_HREF)
     expect(shownWord()).toEqual([])
+    // Its icon is there: one face shows, wordless
+    expect(shownFaces()).toHaveLength(1)
+    expect(shownFaces()[0].querySelector('svg')).not.toBeNull()
     // Named for what it does, for a reader that cannot see the empty slot
     expect(button()).toHaveAccessibleName('Play')
   })
@@ -76,14 +86,16 @@ describe('the primary button', () => {
     mockStore.seed({ userId: USER, title: FILM, entry: seedOf(1800) })
     const html = renderToString(<PrimaryPlayButton {...title} />)
     expect(html).toContain('data-primary-action="pending"')
-    expect(html).not.toMatch(/<span class="col-start-1 row-start-1">/)
+    // No word is visible in it: every word sits in an invisible span
+    expect(html.match(/<span class="invisible">[^<]+<\/span>/g)).toHaveLength(3)
+    expect(html).not.toMatch(/<span>(Play|Resume|Watch again)/)
   })
 
-  it('holds every word it can say in its slot, so the slot is one width whichever shows', () => {
+  it('lays out every face it can wear in one cell, so it is one width whichever shows', () => {
     render(<PrimaryPlayButton {...title} noun="episode" restartNoun="" />)
-    const words = [...button().querySelectorAll('span > span')]
-    expect(words.map((word) => word.textContent)).toEqual(['Play episode', 'Resume episode', 'Watch again'])
-    for (const word of words) expect(word).toHaveClass('col-start-1', 'row-start-1')
+    expect(faces().map((face) => face.textContent)).toEqual(['Play episode', 'Resume episode', 'Watch again'])
+    for (const face of faces()) expect(face).toHaveClass('col-start-1', 'row-start-1')
+    expect(button().firstElementChild).toHaveClass('grid', 'justify-items-center')
   })
 
   it.each([
