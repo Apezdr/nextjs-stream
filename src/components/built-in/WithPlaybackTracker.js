@@ -17,8 +17,9 @@ const PRESENCE_END_URL = '/api/authenticated/sync/presence/end';
 // Never persist a position this close to the start. A resume point in the
 // first seconds is worthless, and a spurious ~0 — e.g. the Cast provider
 // forcing the element to 0 on disconnect, see CastResumeGuard — otherwise
-// overwrites a real resume point in Mongo within ~250ms, unrecoverably. The only behaviour lost is "restarted a title and left again
-// within two seconds".
+// overwrites a real resume point in Mongo within ~250ms, unrecoverably. The
+// only behaviour lost is "restarted a title and left again within two
+// seconds".
 const MIN_PERSISTED_POSITION_S = 2;
 
 function generateSessionId() {
