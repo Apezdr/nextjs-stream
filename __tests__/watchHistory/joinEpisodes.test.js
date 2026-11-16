@@ -48,6 +48,21 @@ describe('joinEpisodeWatchHistory', () => {
     expect(out[1].watchHistory.completed).toBe(true)
   })
 
+  it('still renders the page when the history cannot be read: every episode reads as not watched', async () => {
+    // The lookup map throws on a failed read; a page of episodes only draws progress from it
+    createWatchHistoryLookupMap.mockRejectedValue(new Error('connection closed'))
+    const logged = jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    const out = await joinEpisodeWatchHistory([durable, legacy], 'u1')
+
+    expect(out.map((e) => e._id)).toEqual(['e1', 'e2'])
+    for (const episode of out) {
+      expect(episode.watchHistory).toMatchObject({ isWatched: false, playbackTime: 0, completed: false, progressPercent: 0 })
+    }
+    expect(logged).toHaveBeenCalledWith('Error creating watch history lookup map:', expect.any(Error))
+    logged.mockRestore()
+  })
+
   it('returns an empty list for an empty show', async () => {
     expect(await joinEpisodeWatchHistory([], 'u1')).toEqual([])
     expect(await joinEpisodeWatchHistory(undefined, null)).toEqual([])

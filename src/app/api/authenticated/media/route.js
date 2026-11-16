@@ -7,7 +7,7 @@ import {
   getVisibleEpisodeCountBySeason,
 } from '@src/utils/flatDatabaseUtils'
 import { playableSeasons } from '@src/utils/media/tvFacts'
-import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
+import { addWatchHistoryToItems, addWatchHistoryToTitle } from '@src/utils/watchHistoryUtils'
 import { findOwnLiveSessions, watchingNowFor } from '@src/utils/playbackPresence/personal'
 import { sessionsOnTitle } from '@src/utils/playbackPresence/rules'
 import { applyJitPreference } from '@src/utils/jit/preference'
@@ -127,13 +127,19 @@ export async function GET(req) {
     // doc that lost its normalizedVideoId still resolves through its URLs and
     // mediaId (watchHistory/resolve.js), and failing closed here let an RN
     // session start at 0 and blind-write over a position the web still read.
+    //
+    // The same loss, from the other side: when the history cannot be read,
+    // the request fails (503). Answering without watchHistory, or with an
+    // empty one, says "never played"; the apps start playback from this
+    // answer, at 0, and their first save replaces the position. A 503 they
+    // show as their retry card. Only this, the join for the one title asked
+    // about, fails the request; the episode list below still degrades.
     if (includeWatchHistory && authResult.id && (media?.videoURL || media?.normalizedVideoId)) {
       try {
-        const mediaArray = await addWatchHistoryToItems([media], authResult.id)
-        media = mediaArray[0] || media
+        media = await addWatchHistoryToTitle(media, authResult.id)
       } catch (watchHistoryError) {
-        console.warn('Failed to add watch history to media:', watchHistoryError.message)
-        // Continue without watch history data
+        console.error('Failed to add watch history to media:', watchHistoryError.message)
+        return jsonResponse({ error: 'Watch history could not be read', code: 'WATCH_HISTORY_UNAVAILABLE' }, 503)
       }
     }
 
@@ -209,7 +215,10 @@ export async function GET(req) {
                   // one probe per origin).
                   await Promise.all(seasonWithEpisodes.episodes.map((ep) => applyJitPreference(ep)))
 
-                  // Add watch history to episodes if requested
+                  // Add watch history to episodes if requested. A list: when
+                  // the history cannot be read its rows read as not watched
+                  // (addWatchHistoryToItems), where the join for the title
+                  // asked about, above, fails the request.
                   let episodesWithHistory = seasonWithEpisodes.episodes
                   if (includeWatchHistory && authResult.id) {
                     try {

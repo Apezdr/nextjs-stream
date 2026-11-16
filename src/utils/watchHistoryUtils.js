@@ -2,7 +2,12 @@ import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { findPlaybackForUser } from '@src/utils/watchHistory/database'
-import { isDurableMediaId, resolveWatchEntry, buildWatchHistoryObject } from '@src/utils/watchHistory/resolve'
+import {
+  isDurableMediaId,
+  candidateKeysForItem,
+  resolveWatchEntry,
+  buildWatchHistoryObject,
+} from '@src/utils/watchHistory/resolve'
 import { cache } from 'react'
 
 /**
@@ -70,42 +75,46 @@ function buildWatchHistoryLookupMap(watchHistoryEntries) {
  * Fetches user's watch history and creates a lookup map for efficient matching
  * Wrapped with React.cache() for per-request deduplication in Server Components
  *
+ * Throws when the history cannot be read. It used to answer with an empty
+ * map, which no caller could tell from "nothing watched": a client that
+ * starts playback from that answer starts at 0 and saves over the position
+ * it was never shown. What a failed read means is each caller's to decide: a
+ * list degrades to no progress bars (addWatchHistoryToItems below,
+ * joinEpisodes.js, watchHistoryServerUtils.ts); a request about one title
+ * fails (addWatchHistoryToTitle).
+ *
  * @param {string|ObjectId} userId - The user ID
  * @returns {Promise<Map>} Map with normalizedVideoId as key and watch data as value
+ * @throws when the user's rows cannot be read
  */
 export const createWatchHistoryLookupMap = cache(async function(userId) {
-  try {
-    const client = await clientPromise
-    const db = client.db('Media')
-    const userObjectId = typeof userId === 'object' ? userId : new ObjectId(userId)
+  const client = await clientPromise
+  const db = client.db('Media')
+  const userObjectId = typeof userId === 'object' ? userId : new ObjectId(userId)
 
-    // Fetch user's watch history from WatchHistory collection
-    // Each document is a separate video entry (no arrays)
-    const watchHistoryEntries = await db
-      .collection('WatchHistory')
-      .find(
-        { userId: userObjectId, isValid: { $ne: false } },
-        {
-          projection: {
-            videoId: 1,
-            normalizedVideoId: 1,
-            playbackTime: 1,
-            lastUpdated: 1,
-            mediaType: 1,
-            mediaId: 1,
-            showId: 1,
-            seasonNumber: 1,
-            episodeNumber: 1
-          }
+  // Fetch user's watch history from WatchHistory collection
+  // Each document is a separate video entry (no arrays)
+  const watchHistoryEntries = await db
+    .collection('WatchHistory')
+    .find(
+      { userId: userObjectId, isValid: { $ne: false } },
+      {
+        projection: {
+          videoId: 1,
+          normalizedVideoId: 1,
+          playbackTime: 1,
+          lastUpdated: 1,
+          mediaType: 1,
+          mediaId: 1,
+          showId: 1,
+          seasonNumber: 1,
+          episodeNumber: 1
         }
-      )
-      .toArray()
+      }
+    )
+    .toArray()
 
-    return buildWatchHistoryLookupMap(watchHistoryEntries)
-  } catch (error) {
-    console.error('Error creating watch history lookup map:', error)
-    return new Map() // Return empty map on error to allow graceful degradation
-  }
+  return buildWatchHistoryLookupMap(watchHistoryEntries)
 })
 
 /**
@@ -132,7 +141,13 @@ export function augmentItemsWithWatchHistory(items, watchHistoryMap) {
 }
 
 /**
- * Main function to add watch history to media items
+ * Main function to add watch history to media items: the join for a LIST.
+ *
+ * A list draws progress bars from it and nothing more, so it degrades: when
+ * the history cannot be read every item reads as not watched, as it always
+ * has. Not for a request about one title, which a client may start playback
+ * from: that is addWatchHistoryToTitle, which fails instead.
+ *
  * @param {Array} items - Array of media items
  * @param {string|ObjectId} userId - User ID
  * @returns {Promise<Array>} Items augmented with watch history
@@ -144,8 +159,15 @@ export async function addWatchHistoryToItems(items, userId) {
       console.log(`[PERF] Adding watch history to ${items?.length || 0} items for user ${userId}`)
     }
 
-    const watchHistoryMap = await createWatchHistoryLookupMap(userId)
-    
+    let watchHistoryMap
+    try {
+      watchHistoryMap = await createWatchHistoryLookupMap(userId)
+    } catch (error) {
+      // Deliberate: no progress bars on this list, rather than no list
+      console.error('Error creating watch history lookup map:', error)
+      watchHistoryMap = new Map()
+    }
+
     if (process.env.DEBUG) {
       console.log(`[PERF] Created watch history map with ${watchHistoryMap.size} entries`)
     }
@@ -164,6 +186,64 @@ export async function addWatchHistoryToItems(items, userId) {
     // Return original items on error for graceful degradation
     return items
   }
+}
+
+// What the join reads of a row (buildWatchHistoryLookupMap, buildWatchHistoryObject)
+const TITLE_ROW_FIELDS = {
+  videoId: 1,
+  normalizedVideoId: 1,
+  playbackTime: 1,
+  lastUpdated: 1,
+  mediaType: 1,
+  mediaId: 1,
+  showId: 1,
+  seasonNumber: 1,
+  episodeNumber: 1,
+}
+
+/**
+ * One title with its `watchHistory`: the join for a request about that title
+ * alone (GET /api/authenticated/media for a movie or an episode), which the TV
+ * and mobile apps start playback from.
+ *
+ * It throws when the history cannot be read, where the list join above
+ * degrades. "No row" from a read that failed starts the title at 0, and the
+ * player's first save, a few seconds in, replaces the position that was
+ * never shown.
+ *
+ * The match is the list join's (resolveWatchEntry: mediaId, then the stored
+ * hash, then the hash of each URL, then the raw URLs), read for this title's
+ * keys only instead of from the user's whole history: one indexed read, and
+ * one by URL only when that finds nothing (a row from before URLs were
+ * hashed as they are now).
+ *
+ * @param {Object} item - the movie or episode (mediaId, normalizedVideoId, videoURL…)
+ * @param {string|ObjectId} userId - User ID
+ * @returns {Promise<Object>} the item with its `watchHistory`
+ * @throws when the user's rows cannot be read
+ */
+export async function addWatchHistoryToTitle(item, userId) {
+  const keys = candidateKeysForItem(item)
+  const durableIds = keys.filter(isDurableMediaId)
+  const hashesAndUrls = keys.filter((key) => !isDurableMediaId(key))
+
+  const read = (identity) =>
+    findPlaybackForUser(userId, { filter: { ...identity, isValid: { $ne: false } }, projection: TITLE_ROW_FIELDS })
+  const match = (rows) => resolveWatchEntry(item, buildWatchHistoryLookupMap(rows))
+
+  let watchData = null
+  if (keys.length > 0) {
+    const identities = [
+      ...(durableIds.length > 0 ? [{ mediaId: { $in: durableIds } }] : []),
+      ...(hashesAndUrls.length > 0 ? [{ normalizedVideoId: { $in: hashesAndUrls } }] : []),
+    ]
+    watchData = match(await read({ $or: identities }))
+    if (!watchData && hashesAndUrls.length > 0) {
+      watchData = match(await read({ videoId: { $in: hashesAndUrls } }))
+    }
+  }
+
+  return { ...item, watchHistory: buildWatchHistoryObject(item, watchData) }
 }
 
 /**

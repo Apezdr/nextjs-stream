@@ -12,7 +12,10 @@ jest.mock('@src/lib/roles/gates', () => ({
   approvedGate: { route: jest.fn(async () => ({ id: 'user-1' })) },
 }))
 jest.mock('@src/utils/jit/preference', () => ({ applyJitPreference: jest.fn(async () => {}) }))
-jest.mock('@src/utils/watchHistoryUtils', () => ({ addWatchHistoryToItems: jest.fn(async (items) => items) }))
+jest.mock('@src/utils/watchHistoryUtils', () => ({
+  addWatchHistoryToItems: jest.fn(async (items) => items),
+  addWatchHistoryToTitle: jest.fn(async (item) => item),
+}))
 jest.mock('@src/lib/mongodb', () => ({ __esModule: true, default: Promise.resolve({}) }))
 
 const { resolveEpisodeCredits, resolveTitleCredits } = require('@src/utils/credits/resolve')

@@ -51,6 +51,14 @@ function lookupWatchData(watchMap: Map<string, any>, media: MediaLike) {
  * Get watch history lookup map for a specific user
  * IMPORTANT: userId MUST be passed - this function never calls auth() to avoid issues in cached scopes
  *
+ * An empty map when the history cannot be read (createWatchHistoryLookupMap
+ * throws; this is where the web's server renders catch it). Deliberate, and
+ * as it always was: a list page renders without progress, and a player page
+ * renders with a start position of 0 rather than not at all. For the player
+ * page that is the wrong answer GET /api/authenticated/media no longer gives
+ * (it fails instead); it stays here so that no page's behaviour changes with
+ * the map's.
+ *
  * @param {string|null|undefined} userId - User ID (pass null/undefined for unauthenticated users)
  * @returns {Promise<Map>} Watch history lookup map
  */

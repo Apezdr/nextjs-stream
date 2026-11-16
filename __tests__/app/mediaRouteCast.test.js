@@ -11,7 +11,10 @@ jest.mock('@src/lib/roles/gates', () => ({
   approvedGate: { route: jest.fn(async () => ({ id: 'user-1' })) },
 }))
 jest.mock('@src/utils/jit/preference', () => ({ applyJitPreference: jest.fn(async () => {}) }))
-jest.mock('@src/utils/watchHistoryUtils', () => ({ addWatchHistoryToItems: jest.fn(async (items) => items) }))
+jest.mock('@src/utils/watchHistoryUtils', () => ({
+  addWatchHistoryToItems: jest.fn(async (items) => items),
+  addWatchHistoryToTitle: jest.fn(async (item) => item),
+}))
 
 const people = (n, from = 0) =>
   Array.from({ length: n }, (_, i) => ({

@@ -24,7 +24,10 @@ jest.mock('@src/lib/logger', () => ({ __esModule: true, createLogger: () => mock
 
 // The media route's collaborators that are not under test here
 jest.mock('@src/utils/jit/preference', () => ({ applyJitPreference: jest.fn(async () => {}) }))
-jest.mock('@src/utils/watchHistoryUtils', () => ({ addWatchHistoryToItems: jest.fn(async (items) => items) }))
+jest.mock('@src/utils/watchHistoryUtils', () => ({
+  addWatchHistoryToItems: jest.fn(async (items) => items),
+  addWatchHistoryToTitle: jest.fn(async (item) => item),
+}))
 jest.mock('@src/lib/mongodb', () => ({ __esModule: true, default: Promise.resolve({}) }))
 jest.mock('@src/lib/roles/libraryAccess', () => ({ libraryAccessFor: jest.fn(async () => ({ all: true })) }))
 const mockGetFlatRequestedMedia = jest.fn()

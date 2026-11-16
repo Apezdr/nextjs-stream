@@ -24,7 +24,16 @@ export async function joinEpisodeWatchHistory(episodes, userId) {
   if (list.every((ep) => isDurableMediaId(ep?.mediaId) || ep?.normalizedVideoId)) {
     return addWatchHistoryToItemsBounded(list, userId)
   }
-  const map = await createWatchHistoryLookupMap(userId)
+  // A page of episodes draws progress from this and nothing more: when the
+  // history cannot be read (the map throws), every episode reads "Not
+  // watched" and the page still renders, as it always has. Deliberate.
+  let map
+  try {
+    map = await createWatchHistoryLookupMap(userId)
+  } catch (error) {
+    console.error('Error creating watch history lookup map:', error)
+    map = new Map()
+  }
   return list.map((ep) => ({ ...ep, watchHistory: buildWatchHistoryObject(ep, resolveWatchEntry(ep, map)) }))
 }
 
