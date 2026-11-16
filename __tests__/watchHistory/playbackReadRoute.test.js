@@ -241,15 +241,29 @@ describe('asked by mediaId', () => {
     }
   })
 
-  it('refuses a mediaId and a videoId that name different titles (400), reading nothing', async () => {
+  // Two titles can play from one file, and the catalog names only one of them
+  // for its hash. The position is the file's: the other title's page gets it
+  // too, as it does on a list, instead of a refusal it could not resume from.
+  it('an id and a URL the catalog gives to another title: the file’s row answers', async () => {
     seed(row())
     const find = jest.spyOn(col('WatchHistory'), 'find')
 
     const response = await get({ mediaId: 'mid:anotherfilm', videoId: MOVIE_URL })
 
-    expect(response.status).toBe(400)
-    expect(await response.json()).toEqual({ error: 'mediaId and videoId name different titles' })
-    expect(find).not.toHaveBeenCalled()
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ found: true, playbackTime: 1800, progressPercent: 25 })
+    expect(historyReads(find)).toEqual([[USER, { normalizedVideoId: MOVIE_NID }]])
+  })
+
+  it('the same, with the row left under the file before a quality swap: one read by both ids', async () => {
+    seed(row({ videoId: OLD_URL, normalizedVideoId: OLD_NID, playbackTime: 900 }))
+    const find = jest.spyOn(col('WatchHistory'), 'find')
+
+    expect(await read({ mediaId: 'mid:anotherfilm', videoId: MOVIE_URL })).toMatchObject({ found: true, playbackTime: 900 })
+    expect(historyReads(find)).toEqual([
+      [USER, { normalizedVideoId: MOVIE_NID }],
+      [USER, { mediaId: { $in: ['mid:anotherfilm', MOVIE_MID] } }],
+    ])
   })
 })
 

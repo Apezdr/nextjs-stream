@@ -40,9 +40,10 @@ async function newestRow(userId, filter) {
  *
  * The row is found by index, without loading the user's history:
  *   1. the hash of `videoId` ({userId, normalizedVideoId})
- *   2. the durable id ({userId, mediaId}): the one asked for, or the one the
- *      catalog gives for the URL. This is the row a quality swap or a rename
- *      left under the old file's hash.
+ *   2. the durable id ({userId, mediaId}): the one asked for and the one the
+ *      catalog gives for the URL (two only when two titles play from one
+ *      file). This is the row a quality swap or a rename left under the old
+ *      file's hash.
  *   3. asked by `mediaId` alone: the hash of the file the title plays today,
  *      for a row that was never stamped with the id
  *   4. the raw `videoId` string, last, for a row from before URLs were
@@ -76,12 +77,15 @@ export async function GET(req) {
   // The catalog's word on the title (cached, fail-open): its durable id and
   // its runtime, for the completion flag
   const byUrl = normalizedVideoId ? await resolveMediaIdForNid(normalizedVideoId) : null
-  if (mediaId && byUrl && byUrl.mediaId !== mediaId) {
-    return json(400, { error: 'mediaId and videoId name different titles' })
-  }
   // Asked by id, and the URL (if any) is not a file the catalog knows
   const byId = mediaId && !byUrl ? await resolveTitleForMediaId(mediaId) : null
-  const durableId = mediaId ?? byUrl?.mediaId ?? null
+  // The ids a row for this title can carry: the one asked for, and the one
+  // the catalog gives the file. They differ when two titles play from one
+  // file, which nothing in the catalog rules out (its normalizedVideoId index
+  // is not unique) and the catalog names only one of them for the hash. The
+  // position is the file's, and each of its titles is given it, as on a list:
+  // refusing the request would leave one of the two unable to resume.
+  const durableIds = [...new Set([mediaId, byUrl?.mediaId].filter(Boolean))]
   const durationMs = byUrl?.durationMs ?? byId?.durationMs ?? null
 
   let row = null
@@ -89,8 +93,8 @@ export async function GET(req) {
     if (normalizedVideoId) {
       row = await newestRow(user.id, { normalizedVideoId })
     }
-    if (!row && durableId) {
-      row = await newestRow(user.id, { mediaId: durableId })
+    if (!row && durableIds.length > 0) {
+      row = await newestRow(user.id, { mediaId: durableIds.length === 1 ? durableIds[0] : { $in: durableIds } })
     }
     if (!row && byId?.normalizedVideoId && byId.normalizedVideoId !== normalizedVideoId) {
       row = await newestRow(user.id, { normalizedVideoId: byId.normalizedVideoId })
