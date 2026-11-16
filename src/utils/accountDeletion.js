@@ -3,6 +3,7 @@ import { ObjectId } from 'mongodb'
 import { randomBytes } from 'node:crypto'
 import { userQueries } from '@src/lib/userQueries'
 import { forgetUserSessions } from '@src/lib/authSessionStore'
+import { isAdminUser } from '@src/lib/roles/rules'
 import { deletePlaybackForUser } from '@src/utils/watchHistory/database'
 import { createLogger } from '@src/lib/logger'
 
@@ -739,6 +740,110 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
   }
 
   return { success: true, deletionResults }
+}
+
+/** A deletion an admin asked for that is refused, with a code the route turns into a status. */
+export class AccountDeletionRefusal extends Error {
+  constructor(code, message) {
+    super(message)
+    this.name = 'AccountDeletionRefusal'
+    this.code = code
+  }
+}
+
+/**
+ * A deletion an admin started that did not finish. Its request is on the
+ * Deletion Requests page ("processing" once anything was removed), where it is
+ * run again.
+ */
+export class AccountDeletionIncomplete extends Error {
+  constructor(requestId, cause) {
+    super('The deletion did not finish', { cause })
+    this.name = 'AccountDeletionIncomplete'
+    this.requestId = requestId
+  }
+}
+
+const sameEmail = (typed, email) =>
+  typeof typed === 'string' &&
+  typeof email === 'string' &&
+  email.trim() !== '' &&
+  typed.trim().toLowerCase() === email.trim().toLowerCase()
+
+/**
+ * Delete an account that did not ask to be deleted, on an admin's decision
+ * (the Users page). One pipeline with the deletions users ask for: this
+ * records a request marked as the admin's (requestType 'admin', requestedBy)
+ * and runs it at once, so the audit log names who did it, and a run that stops
+ * shows on the Deletion Requests page to be run again. Nobody is notified.
+ *
+ * Refused with an AccountDeletionRefusal, before anything is written: an id
+ * that isn't one, an account that doesn't exist, the admin's own account, an
+ * admin's account, and a confirmation that is not the account's email.
+ *
+ * @param {Object} options
+ * @param {string} options.userId - The account to delete
+ * @param {string} options.adminId - The admin deleting it: the signed-in admin, never the request's word for it
+ * @param {string} options.confirmEmail - The account's email, as the admin typed it
+ * @param {string|null} [options.reason] - Why, for the record
+ * @returns {Promise<{ requestId: string, deletionResults: Object }>}
+ */
+export async function deleteAccountAsAdmin({ userId, adminId, confirmEmail, reason = null }) {
+  const targetId = toObjectIdOrNull(userId)
+  if (!targetId) {
+    throw new AccountDeletionRefusal('INVALID_USER_ID', 'A valid user id is required.')
+  }
+  const adminObjectId = toObjectIdOrNull(adminId)
+  if (!adminObjectId) {
+    throw new Error('Account deletion needs the id of the admin running it')
+  }
+  if (targetId.equals(adminObjectId)) {
+    throw new AccountDeletionRefusal('OWN_ACCOUNT', 'You can’t delete your own account here.')
+  }
+
+  const user = await userQueries.findById(targetId, { email: 1, role: 1 })
+  if (!user) {
+    throw new AccountDeletionRefusal('USER_NOT_FOUND', 'No account has that id.')
+  }
+  if (isAdminUser(user)) {
+    throw new AccountDeletionRefusal('TARGET_IS_ADMIN', 'An admin’s account can’t be deleted here.')
+  }
+  if (!sameEmail(confirmEmail, user.email)) {
+    throw new AccountDeletionRefusal('EMAIL_MISMATCH', 'The email typed is not this account’s email.')
+  }
+
+  const client = await clientPromise
+  const now = new Date()
+  const deletionRequest = {
+    _id: new ObjectId(),
+    userId: targetId,
+    email: user.email,
+    requestType: 'admin',
+    status: 'pending',
+    reason,
+    requestedBy: adminObjectId,
+    requestedAt: now,
+    // No grace period: it runs now
+    scheduledDeletionAt: now,
+    createdAt: now,
+    updatedAt: now,
+  }
+  await client.db('Users').collection('DeletionRequests').insertOne(deletionRequest)
+  const requestId = deletionRequest._id.toHexString()
+
+  // From here the request exists: whatever stops, it is there to be run again
+  try {
+    await createDeletionAuditLog({
+      deletionRequestId: deletionRequest._id,
+      action: 'admin_request_created',
+      performedBy: adminObjectId,
+      details: { requestType: 'admin', reason, userId: targetId.toHexString() },
+    })
+    const { deletionResults } = await executeAccountDeletion(requestId, adminObjectId.toHexString())
+    return { requestId, deletionResults }
+  } catch (error) {
+    throw new AccountDeletionIncomplete(requestId, error)
+  }
 }
 
 /**

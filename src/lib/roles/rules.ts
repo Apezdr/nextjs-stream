@@ -51,5 +51,13 @@ export const isViewAsWritesOn = (session: MaybeImpersonatedSession | null | unde
 export const canViewAs = (viewerId: unknown, target: (AccessUser & { id?: unknown }) | null | undefined): boolean =>
   Boolean(target?.id) && String(target?.id) !== String(viewerId ?? '') && !isAdminUser(target)
 
+/**
+ * Whether the Users page offers "Delete account" for a user: anyone but the
+ * viewer and admins. The route refuses both whatever the page shows
+ * (src/app/api/authenticated/admin/delete-account/route.ts).
+ */
+export const canDeleteAccount = (viewerId: unknown, target: (AccessUser & { id?: unknown }) | null | undefined): boolean =>
+  Boolean(target?.id) && String(target?.id) !== String(viewerId ?? '') && !isAdminUser(target)
+
 // Which titles a user sees is their library scope, from their roles:
 // libraryScope.ts and libraryAccess.ts.

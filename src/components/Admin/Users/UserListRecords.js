@@ -6,13 +6,15 @@ import {
   ShieldCheckIcon,
   ShieldExclamationIcon,
   EyeIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline'
 import { toast } from 'react-toastify'
 import { updateUserApprovedFlag } from '@src/utils/actions/admin_users'
-import { canViewAs } from '@src/lib/roles/rules'
+import { canDeleteAccount, canViewAs } from '@src/lib/roles/rules'
 import { startViewAs } from '@components/ViewAs/viewAsClient'
 import { memo, useMemo, useState } from 'react'
 import UserRolesPicker from './UserRolesPicker'
+import DeleteAccountDialog from './DeleteAccountDialog'
 
 function cn(...classes) {
   return classes.filter(Boolean).join(' ')
@@ -125,6 +127,8 @@ function UserListRecords({
   viewerId,
 }) {
   const [loadingStates, setLoadingStates] = useState(data ? data.map(() => false) : [])
+  // The row whose "Delete account" dialog is open, or null
+  const [deleting, setDeleting] = useState(null)
 
   const rows = useMemo(() => data || [], [data])
   const limitingRoleIds = useMemo(
@@ -274,6 +278,18 @@ function UserListRecords({
                         </ActionButton>
                       )}
 
+                      {canDeleteAccount(viewerId, item) && (
+                        <ActionButton
+                          variant="danger"
+                          disabled={isLoading}
+                          title={`Delete ${item.name || item.email}’s account and its data, for good`}
+                          onClick={() => setDeleting(item)}
+                        >
+                          <TrashIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                          Delete account
+                        </ActionButton>
+                      )}
+
                       {isLoading && (
                         <span className="self-center text-xs text-slate-400">Updating...</span>
                       )}
@@ -285,6 +301,8 @@ function UserListRecords({
           </tbody>
         </table>
       </div>
+
+      <DeleteAccountDialog user={deleting} onClose={() => setDeleting(null)} onDeleted={updateProcessedData} />
     </div>
   )
 }
