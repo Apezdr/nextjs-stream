@@ -60,7 +60,6 @@ export async function POST(request) {
       data: {
         requestId: deletionRequest._id,
         status: deletionRequest.status,
-        scheduledDeletionAt: deletionRequest.scheduledDeletionAt,
         requestedAt: deletionRequest.requestedAt
       }
     })
@@ -124,15 +123,16 @@ export async function GET(request) {
     return NextResponse.json({
       success: true,
       data: {
-        hasActiveRequest: ['pending', 'pending_verification'].includes(currentRequest.status),
+        // Open, and not yet started: once an admin starts it the account is signed out
+        hasActiveRequest: currentRequest.status === 'pending',
         request: {
           id: currentRequest._id,
           status: currentRequest.status,
+          // 'public': made with the account's email on the public form, perhaps not by its owner
           requestType: currentRequest.requestType,
           requestedAt: currentRequest.requestedAt,
-          scheduledDeletionAt: currentRequest.scheduledDeletionAt,
           reason: currentRequest.reason,
-          canCancel: ['pending', 'pending_verification'].includes(currentRequest.status)
+          canCancel: currentRequest.status === 'pending'
         }
       }
     })
@@ -181,7 +181,7 @@ export async function DELETE(request) {
     }
 
     // Check if request can be cancelled
-    if (!['pending', 'pending_verification'].includes(deletionRequest.status)) {
+    if (deletionRequest.status !== 'pending') {
       return NextResponse.json(
         { error: 'This deletion request cannot be cancelled' },
         { status: 400 }
@@ -196,11 +196,7 @@ export async function DELETE(request) {
     )
 
     // Send cancellation confirmation
-    await sendDeletionCancellationConfirmation(
-      user.id,
-      user.email,
-      cancelledRequest
-    )
+    await sendDeletionCancellationConfirmation(user.id, cancelledRequest)
 
     return NextResponse.json({
       success: true,

@@ -5,8 +5,7 @@ import {
   getDeletionRequestById,
   cancelDeletionRequest,
   executeAccountDeletion,
-  getDeletionAuditLogs,
-  cleanupExpiredTokens
+  getDeletionAuditLogs
 } from '@src/utils/accountDeletion'
 import { 
   sendDeletionCancellationConfirmation,
@@ -16,6 +15,8 @@ import {
 
 /** The statuses a deletion can be run from: not started, or started and stopped part-way. */
 const EXECUTABLE_STATUSES = ['pending', 'processing']
+
+const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
  * GET /api/authenticated/admin/deletion-requests
@@ -37,7 +38,6 @@ export async function GET(request) {
     const status = url.searchParams.get('status')
     const requestType = url.searchParams.get('requestType')
     const email = url.searchParams.get('email')
-    const action = url.searchParams.get('action')
 
     // Validate pagination parameters
     if (page < 0 || limit < 1 || limit > 100) {
@@ -45,16 +45,6 @@ export async function GET(request) {
         { error: 'Invalid pagination parameters' },
         { status: 400 }
       )
-    }
-
-    // Handle special actions
-    if (action === 'cleanup-tokens') {
-      const cleanedCount = await cleanupExpiredTokens()
-      return NextResponse.json({
-        success: true,
-        message: `Cleaned up ${cleanedCount} expired verification tokens`,
-        data: { cleanedCount }
-      })
     }
 
     // Build filters
@@ -67,17 +57,20 @@ export async function GET(request) {
     const result = await getDeletionRequests(filters, { page, limit })
 
     // Add additional computed fields
+    const now = Date.now()
     const enhancedRequests = result.requests.map(request => ({
       ...request,
-      daysUntilDeletion: request.scheduledDeletionAt 
-        ? Math.ceil((new Date(request.scheduledDeletionAt) - new Date()) / (1000 * 60 * 60 * 24))
-        : null,
-      canCancel: ['pending', 'pending_verification'].includes(request.status),
+      // A request that has not started: a deletion under way can only be finished
+      canCancel: request.status === 'pending',
       // What POST { action: 'execute' } accepts: a request that has not
-      // started, at any time, and one whose run stopped part-way
+      // started, and one whose run stopped part-way. Nothing runs on a
+      // schedule: a request waits here until an admin acts on it
       canExecute: EXECUTABLE_STATUSES.includes(request.status),
-      // Whether the 30 days a user is given to change their mind have passed
-      gracePeriodOver: Boolean(request.scheduledDeletionAt) && new Date(request.scheduledDeletionAt) <= new Date()
+      // Whole days a request that has not started has waited for an admin
+      waitingDays:
+        request.status === 'pending' && request.requestedAt
+          ? Math.max(0, Math.floor((now - new Date(request.requestedAt).getTime()) / DAY_MS))
+          : null
     }))
 
     return NextResponse.json({
@@ -169,22 +162,8 @@ async function handleCancelRequest(requestId, adminId, reason) {
       reason || 'Cancelled by administrator'
     )
 
-    // Send cancellation notification
-    if (deletionRequest.userId) {
-      // Authenticated user
-      await sendDeletionCancellationConfirmation(
-        deletionRequest.userId.toString(),
-        deletionRequest.email,
-        cancelledRequest
-      )
-    } else {
-      // Public user
-      await sendDeletionCancellationConfirmation(
-        null,
-        deletionRequest.email,
-        cancelledRequest
-      )
-    }
+    // Tell the account, in the app
+    await sendDeletionCancellationConfirmation(deletionRequest.userId.toString(), cancelledRequest)
 
     return NextResponse.json({
       success: true,

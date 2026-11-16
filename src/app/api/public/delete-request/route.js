@@ -1,230 +1,111 @@
-import { NextResponse } from 'next/server'
+// src/app/api/public/delete-request/route.js
+// The public form's request to delete an account, by email address
+// (/privacy/delete-account): for someone who cannot sign in.
+//
+//   POST { email, reason? }   { success: true, message }
+//
+// Nobody signs in here and the app sends no mail, so nothing proves the
+// address belongs to whoever typed it. The request is therefore only recorded
+// (accountDeletion.js createPublicDeletionRequest): it waits for an admin on
+// the Deletion Requests page, marked as coming from this form, and the
+// account's owner is told in the app and can cancel it.
+//
+// A well-formed request gets ONE answer, whether or not an account has the
+// address and whether or not its deletion was already requested: this form
+// must not tell a stranger who has an account here. Keep it that way: no
+// status in the answer, no "not found", no "already requested", and no GET
+// that looks a request up by address.
+//
+// Limited to a few requests an hour per address the request came from, counted
+// before the email is read, so the limit says nothing about the email either.
 import { createPublicDeletionRequest } from '@src/utils/accountDeletion'
 import {
-  sendEmailVerificationNotification,
-  sendAdminDeletionRequestNotification
+  sendAdminDeletionRequestNotification,
+  sendDeletionRequestConfirmation
 } from '@src/utils/deletionEmailService'
 import {
   checkRateLimit,
-  getClientIP,
   createRateLimitHeaders,
+  getClientIP,
   RATE_LIMITS
 } from '@src/utils/rateLimiter'
+import { createLogger } from '@src/lib/logger'
 
-/**
- * POST /api/public/delete-request
- * Create a new account deletion request for public users (requires email verification)
- */
-export async function POST(request) {
+const log = createLogger('API.Public.DeleteRequest')
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const MAX_EMAIL_LENGTH = 254
+const MAX_REASON_LENGTH = 500
+
+/** The answer to every well-formed request. */
+const RECEIVED = {
+  success: true,
+  message:
+    'If an account uses that email address, its deletion request is now with the admins. No email is sent.'
+}
+
+const refuse = (status, error, extra = {}, headers = undefined) =>
+  Response.json({ error, ...extra }, { status, headers })
+
+/** The account's owner and the admins, in the app. A notification that fails does not undo the request. */
+async function notify(deletionRequest) {
+  const requestId = String(deletionRequest._id)
   try {
-    // Apply rate limiting
-    const rateLimitResult = checkRateLimit(request, RATE_LIMITS.DELETION_REQUEST, 'deletion')
-    
-    if (rateLimitResult.isLimited) {
-      return NextResponse.json(
-        {
-          error: 'Too many deletion requests from this IP address. Please try again later.',
-          retryAfter: rateLimitResult.retryAfter
-        },
-        {
-          status: 429,
-          headers: {
-            ...createRateLimitHeaders(rateLimitResult)
-          }
-        }
-      )
-    }
-
-    const body = await request.json()
-    const { email, reason } = body
-
-    // Validate email
-    if (!email || typeof email !== 'string') {
-      return NextResponse.json(
-        { error: 'Email address is required' },
-        { status: 400 }
-      )
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!emailRegex.test(email.trim())) {
-      return NextResponse.json(
-        { error: 'Invalid email format' },
-        { status: 400 }
-      )
-    }
-
-    // Validate reason if provided
-    if (reason && typeof reason !== 'string') {
-      return NextResponse.json(
-        { error: 'Reason must be a string' },
-        { status: 400 }
-      )
-    }
-
-    if (reason && reason.length > 500) {
-      return NextResponse.json(
-        { error: 'Reason must be less than 500 characters' },
-        { status: 400 }
-      )
-    }
-
-    // Create deletion request with verification token
-    const { deletionRequest, verificationToken } = await createPublicDeletionRequest(
-      email.trim().toLowerCase(),
-      reason?.trim() || null,
-      clientIP
-    )
-
-    // Send email verification notification
-    await sendEmailVerificationNotification(
-      email.trim().toLowerCase(),
-      verificationToken.token,
-      deletionRequest
-    )
-
-    // Send notification to admins
-    await sendAdminDeletionRequestNotification(deletionRequest)
-
-    return NextResponse.json({
-      success: true,
-      message: 'Account deletion request created. Please check your email to verify the request.',
-      data: {
-        requestId: deletionRequest._id,
-        status: deletionRequest.status,
-        email: deletionRequest.email,
-        verificationRequired: true,
-        verificationExpiresAt: verificationToken.expiresAt
-      }
-    })
-
+    await sendDeletionRequestConfirmation(deletionRequest.userId.toString(), deletionRequest)
   } catch (error) {
-    console.error('Error creating public deletion request:', error)
-
-    // Handle specific error cases
-    if (error.message === 'No account found with this email address') {
-      return NextResponse.json(
-        { error: 'No account found with this email address' },
-        { status: 404 }
-      )
-    }
-
-    if (error.message === 'A deletion request is already pending for this email') {
-      return NextResponse.json(
-        { error: 'A deletion request is already pending for this email address' },
-        { status: 409 }
-      )
-    }
-
-    if (error.message === 'Invalid email format') {
-      return NextResponse.json(
-        { error: 'Invalid email format' },
-        { status: 400 }
-      )
-    }
-
-    if (error.message.includes('Too many deletion requests')) {
-      return NextResponse.json(
-        { 
-          error: error.message,
-          retryAfter: 3600
-        },
-        { 
-          status: 429,
-          headers: {
-            'Retry-After': '3600'
-          }
-        }
-      )
-    }
-
-    return NextResponse.json(
-      { error: 'Failed to create deletion request' },
-      { status: 500 }
-    )
+    log.error({ requestId, error: error?.message }, 'Could not tell the account about its deletion request')
+  }
+  try {
+    await sendAdminDeletionRequestNotification(deletionRequest)
+  } catch (error) {
+    log.error({ requestId, error: error?.message }, 'Could not tell the admins about a deletion request')
   }
 }
 
-/**
- * GET /api/public/delete-request
- * Get information about public deletion requests (limited info for security)
- */
-export async function GET(request) {
-  try {
-    const url = new URL(request.url)
-    const email = url.searchParams.get('email')
-
-    if (!email) {
-      return NextResponse.json(
-        { error: 'Email parameter is required' },
-        { status: 400 }
-      )
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!emailRegex.test(email.trim())) {
-      return NextResponse.json(
-        { error: 'Invalid email format' },
-        { status: 400 }
-      )
-    }
-
-    const clientIP = getClientIP(request)
-    
-    // Apply rate limiting for status checks too
-    if (isRateLimited(`status_${clientIP}`, 10, 60 * 60 * 1000)) { // 10 status checks per hour per IP
-      return NextResponse.json(
-        { 
-          error: 'Too many status check requests from this IP address. Please try again later.',
-          retryAfter: 3600
-        },
-        { 
-          status: 429,
-          headers: {
-            'Retry-After': '3600'
-          }
-        }
-      )
-    }
-
-    // Import here to avoid circular dependencies
-    const { getDeletionRequests } = await import('@src/utils/accountDeletion')
-
-    // Get deletion requests for this email (limited info for security)
-    const { requests } = await getDeletionRequests(
-      { email: email.trim().toLowerCase() },
-      { page: 0, limit: 1 }
-    )
-
-    if (requests.length === 0) {
-      return NextResponse.json({
-        success: true,
-        data: {
-          hasActiveRequest: false,
-          message: 'No deletion request found for this email address'
-        }
-      })
-    }
-
-    const request_data = requests[0]
-
-    // Only return limited information for security
-    return NextResponse.json({
-      success: true,
-      data: {
-        hasActiveRequest: ['pending', 'pending_verification'].includes(request_data.status),
-        status: request_data.status,
-        requestedAt: request_data.requestedAt,
-        scheduledDeletionAt: request_data.status === 'pending' ? request_data.scheduledDeletionAt : null,
-        requiresVerification: request_data.status === 'pending_verification'
-      }
-    })
-
-  } catch (error) {
-    console.error('Error getting public deletion request status:', error)
-    return NextResponse.json(
-      { error: 'Failed to get deletion request status' },
-      { status: 500 }
+export async function POST(request) {
+  const rateLimit = checkRateLimit(request, RATE_LIMITS.DELETION_REQUEST, 'deletion')
+  if (rateLimit.isLimited) {
+    return refuse(
+      429,
+      'Too many deletion requests from this address. Try again later.',
+      { retryAfter: rateLimit.retryAfter },
+      createRateLimitHeaders(rateLimit)
     )
   }
+
+  const body = await request.json().catch(() => null)
+  const email = typeof body?.email === 'string' ? body.email.trim() : ''
+  const reason = body?.reason ?? null
+
+  if (email === '') {
+    return refuse(400, 'Email address is required')
+  }
+  if (email.length > MAX_EMAIL_LENGTH || !EMAIL.test(email)) {
+    return refuse(400, 'Invalid email format')
+  }
+  if (reason !== null && typeof reason !== 'string') {
+    return refuse(400, 'Reason must be a string')
+  }
+  if (reason !== null && reason.length > MAX_REASON_LENGTH) {
+    return refuse(400, `Reason must be at most ${MAX_REASON_LENGTH} characters`)
+  }
+
+  const clientIp = getClientIP(request)
+  try {
+    const deletionRequest = await createPublicDeletionRequest(
+      email,
+      reason?.trim() || null,
+      clientIp === 'unknown' ? null : clientIp
+    )
+    if (deletionRequest) {
+      // The request's id, never the email
+      log.info({ requestId: String(deletionRequest._id) }, 'A deletion request was made on the public form')
+      await notify(deletionRequest)
+    }
+  } catch (error) {
+    log.error({ error: error?.message }, 'A deletion request from the public form could not be recorded')
+    return refuse(500, 'The request could not be recorded. Try again later.')
+  }
+
+  return Response.json(RECEIVED)
 }

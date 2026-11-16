@@ -1,6 +1,5 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
-import { randomBytes } from 'node:crypto'
 import { userQueries } from '@src/lib/userQueries'
 import { forgetUserSessions } from '@src/lib/authSessionStore'
 import { isAdminUser } from '@src/lib/roles/rules'
@@ -28,7 +27,17 @@ function toObjectIdOrNull(value) {
 }
 
 /**
- * Create a deletion request for an authenticated user
+ * A request that is still open: not started ('pending'), or started and not
+ * finished ('processing'). A deletion runs from either; only one that has not
+ * started can be cancelled.
+ */
+const OPEN_STATUSES = ['pending', 'processing']
+
+/**
+ * Create a deletion request for an authenticated user. The request waits for
+ * an admin, who deletes the account from the Deletion Requests page: nothing
+ * runs on a schedule, so the request carries no date. Until an admin starts
+ * it, the user can cancel it.
  * @param {string} userId - User ID requesting deletion
  * @param {string} reason - Optional reason for deletion
  * @returns {Promise<Object>} Created deletion request
@@ -36,23 +45,24 @@ function toObjectIdOrNull(value) {
 export async function createAuthenticatedDeletionRequest(userId, reason = null) {
   const client = await clientPromise
   const db = client.db('Users')
-  
+
   // Check if user exists
   const user = await userQueries.findById(userId)
   if (!user) {
     throw new Error('User not found')
   }
-  
-  // Check for existing pending request
+
+  // Check for existing open request
   const existingRequest = await db.collection('DeletionRequests').findOne({
     userId: new ObjectId(userId),
-    status: 'pending'
+    status: { $in: OPEN_STATUSES }
   })
-  
+
   if (existingRequest) {
     throw new Error('A deletion request is already pending for this user')
   }
-  
+
+  const now = new Date()
   const deletionRequest = {
     _id: new ObjectId(),
     userId: new ObjectId(userId),
@@ -60,14 +70,13 @@ export async function createAuthenticatedDeletionRequest(userId, reason = null) 
     requestType: 'authenticated',
     status: 'pending',
     reason,
-    requestedAt: new Date(),
-    scheduledDeletionAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days grace period
-    createdAt: new Date(),
-    updatedAt: new Date()
+    requestedAt: now,
+    createdAt: now,
+    updatedAt: now
   }
-  
+
   await db.collection('DeletionRequests').insertOne(deletionRequest)
-  
+
   // Create audit log entry
   await createDeletionAuditLog({
     deletionRequestId: deletionRequest._id,
@@ -75,171 +84,81 @@ export async function createAuthenticatedDeletionRequest(userId, reason = null) 
     performedBy: userId,
     details: { requestType: 'authenticated', reason }
   })
-  
+
   return deletionRequest
 }
 
 /**
- * Create a deletion request for a public user (email-based)
- * @param {string} email - Email address requesting deletion
- * @param {string} reason - Optional reason for deletion
- * @param {string} clientIp - Client IP address for rate limiting
- * @returns {Promise<Object>} Created deletion request and verification token
+ * The account an email address belongs to, whatever its letters' case: the
+ * sign-in providers report addresses in their own case, and the person typing
+ * one into the public form need not match it.
+ */
+function findAccountByEmail(email) {
+  return userQueries
+    .collection()
+    .findOne({ email }, { projection: { email: 1 }, collation: { locale: 'en', strength: 2 } })
+}
+
+/**
+ * Record a deletion request made on the public form, by email address
+ * (/privacy/delete-account): the way in for someone who cannot sign in.
+ *
+ * Nobody has proved they own the address: the app sends no mail, so there is
+ * no link to click. The request therefore waits for an admin like any other,
+ * is marked as coming from the form (requestType 'public'), and the account's
+ * owner is told in the app and can cancel it. The admin decides.
+ *
+ * Returns null, and records nothing, when no account has the address or its
+ * deletion is already requested. The route answers the same either way:
+ * whether an address has an account is not this form's to tell.
+ *
+ * @param {string} email - The address typed into the form
+ * @param {string|null} reason - Optional reason for deletion
+ * @param {string|null} clientIp - Where the request came from, for the admin's record
+ * @returns {Promise<Object|null>} The request recorded, or null
  */
 export async function createPublicDeletionRequest(email, reason = null, clientIp = null) {
+  if (typeof email !== 'string' || email.trim() === '') {
+    throw new Error('A deletion request by email needs an email address')
+  }
+
+  const user = await findAccountByEmail(email.trim())
+  if (!user) return null
+
   const client = await clientPromise
   const db = client.db('Users')
-  
-  // Validate email format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  if (!emailRegex.test(email)) {
-    throw new Error('Invalid email format')
-  }
-  
-  // Check if user exists
-  const user = await userQueries.findByEmail(email)
-  if (!user) {
-    throw new Error('No account found with this email address')
-  }
-  
-  // Check for existing pending request
+
   const existingRequest = await db.collection('DeletionRequests').findOne({
-    email,
-    status: 'pending'
+    userId: user._id,
+    status: { $in: OPEN_STATUSES }
   })
-  
-  if (existingRequest) {
-    throw new Error('A deletion request is already pending for this email')
-  }
-  
-  // Rate limiting check (max 3 requests per IP per hour)
-  if (clientIp) {
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
-    const recentRequests = await db.collection('DeletionRequests').countDocuments({
-      'metadata.clientIp': clientIp,
-      requestedAt: { $gte: oneHourAgo }
-    })
-    
-    if (recentRequests >= 3) {
-      throw new Error('Too many deletion requests from this IP address. Please try again later.')
-    }
-  }
-  
+  if (existingRequest) return null
+
+  const now = new Date()
   const deletionRequest = {
     _id: new ObjectId(),
     userId: user._id,
-    email,
+    // The account's own address, not the form's spelling of it
+    email: user.email,
     requestType: 'public',
-    status: 'pending_verification',
+    status: 'pending',
     reason,
-    requestedAt: new Date(),
-    scheduledDeletionAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days grace period
-    metadata: {
-      clientIp,
-      userAgent: null // Can be added if needed
-    },
-    createdAt: new Date(),
-    updatedAt: new Date()
+    requestedAt: now,
+    metadata: { clientIp },
+    createdAt: now,
+    updatedAt: now
   }
-  
+
   await db.collection('DeletionRequests').insertOne(deletionRequest)
-  
-  // Create verification token
-  const verificationToken = await createDeletionVerificationToken(deletionRequest._id, email)
-  
-  // Create audit log entry
+
   await createDeletionAuditLog({
     deletionRequestId: deletionRequest._id,
     action: 'public_request_created',
     performedBy: null,
-    details: { requestType: 'public', reason, clientIp }
+    details: { requestType: 'public', reason },
+    ipAddress: clientIp
   })
-  
-  return { deletionRequest, verificationToken }
-}
 
-/**
- * Create a verification token for email verification
- * @param {ObjectId} deletionRequestId - Deletion request ID
- * @param {string} email - Email address
- * @returns {Promise<Object>} Created verification token
- */
-export async function createDeletionVerificationToken(deletionRequestId, email) {
-  const client = await clientPromise
-  const db = client.db('Users')
-  
-  // 32 URL-safe characters, 192 bits
-  const token = randomBytes(24).toString('base64url')
-  const verificationToken = {
-    _id: new ObjectId(),
-    deletionRequestId,
-    email,
-    token,
-    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-    used: false,
-    createdAt: new Date()
-  }
-  
-  await db.collection('DeletionVerificationTokens').insertOne(verificationToken)
-  return verificationToken
-}
-
-/**
- * Verify a deletion request using email verification token
- * @param {string} token - Verification token
- * @returns {Promise<Object>} Updated deletion request
- */
-export async function verifyDeletionRequest(token) {
-  const client = await clientPromise
-  const db = client.db('Users')
-  
-  // Find and validate token
-  const verificationToken = await db.collection('DeletionVerificationTokens').findOne({
-    token,
-    used: false,
-    expiresAt: { $gt: new Date() }
-  })
-  
-  if (!verificationToken) {
-    throw new Error('Invalid or expired verification token')
-  }
-  
-  // Mark token as used
-  await db.collection('DeletionVerificationTokens').updateOne(
-    { _id: verificationToken._id },
-    { 
-      $set: { 
-        used: true, 
-        usedAt: new Date() 
-      } 
-    }
-  )
-  
-  // Update deletion request status
-  const deletionRequest = await db.collection('DeletionRequests').findOneAndUpdate(
-    { _id: verificationToken.deletionRequestId },
-    { 
-      $set: { 
-        status: 'pending',
-        verifiedAt: new Date(),
-        updatedAt: new Date()
-      } 
-    },
-    { returnDocument: 'after' }
-  )
-  
-  if (!deletionRequest) {
-    throw new Error('Deletion request not found')
-  }
-  
-  // Create audit log entry
-  await createDeletionAuditLog({
-    deletionRequestId: verificationToken.deletionRequestId,
-    action: 'email_verified',
-    performedBy: null,
-    details: { email: verificationToken.email }
-  })
-  
   return deletionRequest
 }
 
@@ -265,7 +184,6 @@ const REQUEST_FILTERS = {
   status: (value) => value,
   requestType: (value) => value,
   email: (value) => ({ $regex: value, $options: 'i' }),
-  scheduledDeletionAt: (value) => value,
   _id: (value) => requireRequestFilterId('_id', value),
   userId: (value) => requireRequestFilterId('userId', value),
 }
@@ -291,7 +209,7 @@ function deletionRequestQuery(filters) {
 
 /**
  * Get all deletion requests (admin function)
- * @param {Object} filters - Optional filters: status, requestType, email, scheduledDeletionAt, _id, userId
+ * @param {Object} filters - Optional filters: status, requestType, email, _id, userId
  * @param {Object} pagination - Pagination options
  * @returns {Promise<Object>} Deletion requests with pagination info
  */
@@ -360,7 +278,8 @@ export async function cancelDeletionRequest(deletionRequestId, performedBy, reas
   const deletionRequest = await db.collection('DeletionRequests').findOneAndUpdate(
     {
       _id: requestId,
-      status: { $in: ['pending', 'pending_verification'] }
+      // One that has not started: a deletion under way can only be finished
+      status: 'pending'
     },
     { 
       $set: { 
@@ -391,12 +310,6 @@ export async function cancelDeletionRequest(deletionRequestId, performedBy, reas
 
 /** Where better-auth keeps user, session, account and deviceCode. */
 const authDb = (client) => client.db(process.env.MONGODB_AUTH_DB || 'Users')
-
-/** A request a deletion can run from: not started, or started and not finished. */
-const RUNNABLE_STATUSES = ['pending', 'processing']
-
-/** A request that has not started: it can still be cancelled. */
-const OPEN_STATUSES = ['pending', 'pending_verification']
 
 /** Why better-auth refuses a session to an account whose deletion has started. */
 export const DELETION_BAN_REASON = 'Account deletion in progress'
@@ -532,23 +445,13 @@ async function deleteLegacySignIn({ client, userId, removed }) {
   }
 }
 
-/**
- * Step 5. The account's other deletion requests end here (this one deletes it),
- * and the email-verification tokens of all its requests go.
- */
+/** Step 5. The account's other deletion requests end here: this one deletes it. */
 async function closeOtherRequests({ client, userId, requestId, performedBy, removed }) {
-  const users = client.db('Users')
-  const requests = users.collection('DeletionRequests')
-
-  const mine = await requests.find({ userId }, { projection: { _id: 1 } }).toArray()
-  const tokens = await users
-    .collection('DeletionVerificationTokens')
-    .deleteMany({ deletionRequestId: { $in: mine.map((request) => request._id) } })
-  await removed('DeletionVerificationTokens', tokens.deletedCount)
+  const requests = client.db('Users').collection('DeletionRequests')
 
   const now = new Date()
   const superseded = await requests.updateMany(
-    { userId, _id: { $ne: requestId }, status: { $in: [...OPEN_STATUSES, 'processing'] } },
+    { userId, _id: { $ne: requestId }, status: { $in: OPEN_STATUSES } },
     {
       $set: {
         status: 'cancelled',
@@ -666,7 +569,7 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
   if (!deletionRequest) {
     throw new Error('Deletion request not found')
   }
-  if (!RUNNABLE_STATUSES.includes(deletionRequest.status)) {
+  if (!OPEN_STATUSES.includes(deletionRequest.status)) {
     throw new Error('Deletion request is not in pending status')
   }
 
@@ -676,7 +579,7 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
 
   const startedAt = new Date()
   const started = await requests.updateOne(
-    { _id: requestId, status: { $in: RUNNABLE_STATUSES } },
+    { _id: requestId, status: { $in: OPEN_STATUSES } },
     {
       $set: {
         status: 'processing',
@@ -823,8 +726,6 @@ export async function deleteAccountAsAdmin({ userId, adminId, confirmEmail, reas
     reason,
     requestedBy: adminObjectId,
     requestedAt: now,
-    // No grace period: it runs now
-    scheduledDeletionAt: now,
     createdAt: now,
     updatedAt: now,
   }
@@ -899,36 +800,4 @@ export async function getDeletionAuditLogs(deletionRequestId) {
   ]).toArray()
   
   return logs
-}
-
-/**
- * Check for deletion requests that are ready for automatic execution
- * @returns {Promise<Array>} Deletion requests ready for execution
- */
-export async function getReadyForDeletion() {
-  const client = await clientPromise
-  const db = client.db('Users')
-  
-  const now = new Date()
-  const requests = await db.collection('DeletionRequests').find({
-    status: 'pending',
-    scheduledDeletionAt: { $lte: now }
-  }).toArray()
-  
-  return requests
-}
-
-/**
- * Cleanup expired verification tokens
- * @returns {Promise<number>} Number of tokens cleaned up
- */
-export async function cleanupExpiredTokens() {
-  const client = await clientPromise
-  const db = client.db('Users')
-  
-  const result = await db.collection('DeletionVerificationTokens').deleteMany({
-    expiresAt: { $lt: new Date() }
-  })
-  
-  return result.deletedCount
 }

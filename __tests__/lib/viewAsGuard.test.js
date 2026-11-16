@@ -463,8 +463,7 @@ describe('guards: every write goes through the proxy’s check', () => {
       .sort()
     expect(sessionless).toEqual([
       '/api/cast/playback', // the Cast receiver's token (castPlaybackToken.ts)
-      '/api/public/delete-request', // an account-deletion request by email address
-      '/api/public/verify-deletion', // the link in that email
+      '/api/public/delete-request', // an account-deletion request by email address, which only an admin can carry out
     ])
   })
 

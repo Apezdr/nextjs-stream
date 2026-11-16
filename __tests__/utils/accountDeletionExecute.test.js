@@ -56,7 +56,7 @@ const auditActions = () => col('Users', 'DeletionAuditLog').docs.map((doc) => do
 const COLLECTIONS = {
   Users: [
     'user', 'session', 'account', 'deviceCode', 'PlaylistVisibility', 'DeletionRequests', 'DeletionAuditLog',
-    'DeletionVerificationTokens', 'AuthenticatedUsers', 'AuthenticatedUsers_backup', 'SSOAccounts', 'SSOAccounts_backup',
+    'AuthenticatedUsers', 'AuthenticatedUsers_backup', 'SSOAccounts', 'SSOAccounts_backup',
     'authSessions', 'usedTokens',
   ],
   Media: ['WatchHistory', 'PlaybackStatus', 'PlaybackPresence', 'Notifications', 'ClientErrorReports', 'ArrRequests', 'Playlists', 'Watchlist'],
@@ -226,7 +226,6 @@ describe('a deletion that runs to the end', () => {
         SSOAccounts_backup: 1,
         authSessions: 1,
         usedTokens: 1,
-        DeletionVerificationTokens: 0,
         supersededRequests: 0,
         account: 1,
         user: 1,
@@ -288,20 +287,22 @@ describe('a deletion that runs to the end', () => {
     expect(col('Media', 'ArrRequests').docs.map((doc) => doc.userId).sort()).toEqual([ADA, GRACE].sort())
   })
 
-  test('closes the account’s other requests and removes their verification tokens', async () => {
+  test('closes the account’s other open requests, and nobody else’s', async () => {
+    // One made on the public form while this one waited
     const other = '64b7f0c2a1b2c3d4e5f60002'
     const graces = '64b7f0c2a1b2c3d4e5f60003'
-    col('Users', 'DeletionRequests').insertOne({ _id: oid(other), userId: oid(ADA), email: 'ada@example.invalid', status: 'pending_verification' })
+    const old = '64b7f0c2a1b2c3d4e5f60004'
+    col('Users', 'DeletionRequests').insertOne({ _id: oid(other), userId: oid(ADA), email: 'ada@example.invalid', requestType: 'public', status: 'pending' })
     col('Users', 'DeletionRequests').insertOne({ _id: oid(graces), userId: oid(GRACE), email: 'grace@example.invalid', status: 'pending' })
-    col('Users', 'DeletionVerificationTokens').insertOne({ deletionRequestId: oid(other), token: 'ada-token' })
-    col('Users', 'DeletionVerificationTokens').insertOne({ deletionRequestId: oid(graces), token: 'grace-token' })
+    col('Users', 'DeletionRequests').insertOne({ _id: oid(old), userId: oid(ADA), email: 'ada@example.invalid', status: 'cancelled', cancellationReason: 'Cancelled by user' })
 
     const { deletionResults } = await executeAccountDeletion(REQUEST, ADMIN)
 
     expect(request(other)).toMatchObject({ status: 'cancelled', supersededBy: REQUEST, cancelledBy: ADMIN })
     expect(request(graces).status).toBe('pending')
-    expect(col('Users', 'DeletionVerificationTokens').docs.map((doc) => doc.token)).toEqual(['grace-token'])
-    expect(deletionResults).toMatchObject({ DeletionVerificationTokens: 1, supersededRequests: 1 })
+    // One she cancelled herself keeps its own reason
+    expect(request(old)).toMatchObject({ status: 'cancelled', cancellationReason: 'Cancelled by user' })
+    expect(deletionResults).toMatchObject({ supersededRequests: 1 })
   })
 })
 
@@ -433,7 +434,7 @@ describe('a deletion without a usable user id', () => {
 })
 
 describe('a request that cannot be run', () => {
-  test.each(['completed', 'cancelled', 'pending_verification'])('a %s request is refused and nothing is removed', async (status) => {
+  test.each(['completed', 'cancelled'])('a %s request is refused and nothing is removed', async (status) => {
     seed({ requestOverrides: { status } })
     const before = snapshot()
 
@@ -457,7 +458,7 @@ describe('a deletion that stops part-way', () => {
     ['activity', 'Media', 'Notifications', 'deleteMany'],
     ['lists', 'Media', 'Playlists', 'updateMany'],
     ['legacySignIn', 'Users', 'SSOAccounts', 'deleteMany'],
-    ['requests', 'Users', 'DeletionVerificationTokens', 'deleteMany'],
+    ['requests', 'Users', 'DeletionRequests', 'updateMany'],
     ['account', 'Users', 'user', 'deleteOne'],
   ]
 

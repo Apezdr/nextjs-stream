@@ -116,9 +116,9 @@ describe('an admin’s cancel', () => {
     expect(statusOf(ADA_REQUEST)).toBe('cancelled')
     expect(statusOf(GRACE_REQUEST)).toBe('pending')
     expect(mockEmails.sendDeletionCancellationConfirmation).toHaveBeenCalledTimes(1)
-    const [userId, email] = mockEmails.sendDeletionCancellationConfirmation.mock.calls[0]
+    const [userId, cancelled] = mockEmails.sendDeletionCancellationConfirmation.mock.calls[0]
     expect(userId).toBe(ADA)
-    expect(email).toBe('ada@example.invalid')
+    expect(cancelled).toMatchObject({ email: 'ada@example.invalid', status: 'cancelled' })
   })
 
   test('an id no request has is a 404, whatever else is pending', async () => {
