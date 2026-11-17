@@ -174,7 +174,8 @@ export default function RailScrubber({
         onPointerLeave={() => setHover(null)}
         onKeyDown={handleKeyDown}
       >
-        <div ref={plotRef} className="flex h-10 border-b" style={{ borderColor: LINE }}>
+        {/* The gap under the bars is the lower half of the handle's knob, clear of the labels */}
+        <div ref={plotRef} className="mb-2 flex h-10 border-b" style={{ borderColor: LINE }}>
           {months.map((month, index) => (
             <div
               key={month.key}

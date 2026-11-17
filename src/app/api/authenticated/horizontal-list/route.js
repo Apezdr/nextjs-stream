@@ -38,6 +38,18 @@ const contextByType = {
   recommendations: { dateContext: 'recommendations' },
 }
 
+// The blurred placeholder images a card carries are its heaviest part by far: a
+// TV card's run to tens of kilobytes, where the rest of the card is about one.
+// A caller that draws none of them (the date strip's blocks of 48 cards) asks
+// for cards without, with blur=false.
+const BLUR_FIELDS = ['posterBlurhash', 'backdropBlurhash', 'thumbnailBlurhash']
+function withoutBlur(card) {
+  if (!card || typeof card !== 'object') return card
+  const lean = { ...card }
+  for (const field of BLUR_FIELDS) delete lean[field]
+  return lean
+}
+
 const badRequest = (message) =>
   new Response(JSON.stringify({ error: message }), {
     status: 400,
@@ -190,6 +202,7 @@ export const GET = async (req) => {
   // longer holds are left out of a page, so a caller that keeps cards from
   // several requests (the date strip's blocks) cannot place them by counting.
   const withPositions = type === 'recentlyWatched' && searchParams.get('positions') === 'true'
+  const withBlur = searchParams.get('blur') !== 'false'
   // Playlist params (for type=playlist)
   const playlistIdParam = searchParams.get('playlistId') || null
 
@@ -447,10 +460,11 @@ export const GET = async (req) => {
 
     // Build response data. Cards carry only the metadata fields a client reads
     // (CARD_METADATA_FIELDS); every server-side reader above has already run.
+    const outgoing = (card) => (withBlur ? trimCardMetadata(card) : withoutBlur(trimCardMetadata(card)))
     const responseData = {
-      currentItems: items.map(trimCardMetadata),
-      previousItem: trimCardMetadata(previousItem) || null,
-      nextItem: trimCardMetadata(nextItem) || null,
+      currentItems: items.map(outgoing),
+      previousItem: outgoing(previousItem) || null,
+      nextItem: outgoing(nextItem) || null,
       playlist: playlistMeta
     }
 

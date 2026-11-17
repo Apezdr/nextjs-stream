@@ -3,13 +3,17 @@
  *
  * A drag passes over hundreds of pages. Asking the server for each would be
  * hundreds of requests a second, and asking for none until the drag ends
- * would hide the titles someone is looking for. So cards are fetched in
- * blocks (48 titles) and kept by list position, and the server is asked:
+ * would hide the titles someone is looking for. So lightweight cards (title
+ * and date, no images) are fetched in blocks of 48 and kept by list position,
+ * and the server is asked:
  *
  *   - for one block at a time,
  *   - during a drag, only for a block the handle has stayed on for `dwellMs`
  *     (a sweep across two years asks for nothing in between),
  *   - never twice for a block it has answered, until clear().
+ *
+ * These cards are only what the row shows while the handle moves. The page it
+ * rests on is fetched by the row's own request, with its posters and progress.
  *
  * No React here: the row owns one loader and re-renders on `onChange`.
  */
@@ -157,30 +161,5 @@ export class BlockLoader {
         this.onChange()
         this.#pump()
       })
-  }
-}
-
-/**
- * One page of the row put together from the loader's cards, in the shape
- * horizontal-list answers with, or null while a block it needs is missing.
- * A position with no card is a title the library no longer holds: the page
- * goes without it, as the server's own page does.
- */
-export function pageFromBlocks(loader, first, perPage, total) {
-  if (total <= 0 || first >= total) return null
-  const from = Math.max(0, first - 1)
-  const to = Math.min(total - 1, first + perPage)
-  if (!loader.covers(from, to)) return null
-
-  const currentItems = []
-  for (let position = first; position < first + perPage; position++) {
-    const card = loader.cards.get(position)
-    if (card) currentItems.push(card)
-  }
-  return {
-    currentItems,
-    previousItem: first > 0 ? loader.cards.get(first - 1) ?? null : null,
-    nextItem: loader.cards.get(first + perPage) ?? null,
-    playlist: null,
   }
 }

@@ -4,8 +4,8 @@
  * A long history gets the strip where the page dots were, and the date beside
  * its title. Dragging the strip shows the titles under the handle, and what it
  * may cost the server is the point of the design: nothing while the handle
- * sweeps, one block of 48 once it stays put, and no request at all for the
- * page it settles on, which is put together from that block.
+ * sweeps, one block of 48 lightweight cards once it stays put, and one
+ * ordinary page request where it rests.
  */
 
 import React, { act } from 'react'
@@ -74,6 +74,10 @@ function serve(url) {
 }
 const blockRequests = () => requests.filter((url) => url.includes('positions=true'))
 const pageRequests = (page) => requests.filter((url) => url.includes(`limit=${PER_PAGE}&`) && url.endsWith(`page=${page}&includeWatchHistory=true`))
+
+// The lightweight cards on show (not the dimmed neighbours at the edges)
+const lightTitles = () =>
+  [...container.querySelectorAll('[data-testid="scrub-card"]:not(.scale-95) .truncate')].map((title) => title.textContent)
 
 let container
 let root
@@ -190,30 +194,39 @@ describe('dragging the strip', () => {
     expect(blockRequests().length).toBeLessThanOrEqual(2)
     expect(blockRequests()[0]).toContain('limit=48')
     expect(blockRequests()[0]).toContain('type=recentlyWatched')
-    expect(blockRequests()[0]).toContain('includeWatchHistory=true')
+    // Lightweight cards: no placeholder images (most of a card's weight), no progress
+    expect(blockRequests()[0]).toContain('blur=false')
+    expect(blockRequests()[0]).not.toContain('includeWatchHistory')
   })
 
-  it('shows the titles under the handle without letting go, and settles with no request for the page', async () => {
+  it('shows the titles under the handle without letting go, then the real cards where it rests', async () => {
     await act(async () => fireEvent.pointerDown(slider, at(0.5)))
     await act(async () => fireEvent.pointerMove(slider, at(0.52)))
-    // Moving: the page's real cards are not shown yet
+    // Moving: no real cards, and no page asked for
     expect(titles()).toEqual([])
 
-    // The block arrives and the handle has rested: the page's real cards are in
-    await waitFor(() => expect(titles().length).toBe(PER_PAGE), { timeout: 2000 })
-    const first = Number(titles()[0].replace('Title ', ''))
+    // Its block arrives while the button is still down: titles, on lightweight cards
+    await wait(170)
+    const light = lightTitles()
+    expect(light).toHaveLength(PER_PAGE)
+    const first = Number(light[0].replace('Title ', ''))
     const page = first / PER_PAGE
     expect(Number.isInteger(page)).toBe(true)
     expect(page).toBeGreaterThan(10)
-    expect(titles()).toEqual([`Title ${first}`, `Title ${first + 1}`, `Title ${first + 2}`])
+    expect(light).toEqual([`Title ${first}`, `Title ${first + 1}`, `Title ${first + 2}`])
+    expect(requests.filter((url) => url.includes(`limit=${PER_PAGE}&`))).toHaveLength(0)
+
+    // The handle has rested: the row asks for that one page, and its real cards take over
+    await waitFor(() => expect(titles()).toEqual(light), { timeout: 2000 })
+    expect(pageRequests(page)).toHaveLength(1)
+    expect(lightTitles()).toEqual([])
 
     await act(async () => fireEvent.pointerUp(slider, at(0.52)))
     await wait(50)
 
     expect(slider.getAttribute('aria-valuenow')).toBe(String(page + 1))
-    expect(titles()[0]).toBe(`Title ${first}`)
-    // The page came from the block, not from a request of its own
-    expect(pageRequests(page)).toHaveLength(0)
+    expect(titles()).toEqual(light)
+    expect(pageRequests(page)).toHaveLength(1)
     expect(blockRequests().length).toBeLessThanOrEqual(3)
     expect(headSlot.textContent).toContain('Back to today')
   })

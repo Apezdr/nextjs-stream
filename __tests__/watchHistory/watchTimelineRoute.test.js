@@ -38,8 +38,8 @@ jest.mock('@src/utils/backendAuth', () => ({ getBackendAuthHeaders: jest.fn(asyn
 jest.mock('@src/utils/cache/horizontalListData', () => ({}))
 jest.mock('@src/utils/auth_utils', () => ({
   // As the real one: a new object with the card's fields only, or null
-  sanitizeCardItems: (items) => items.map((item) => (item.broken ? null : { id: item.id, title: item.title })).filter(Boolean),
-  sanitizeCardData: (item) => (item.broken ? null : { id: item.id, title: item.title }),
+  sanitizeCardItems: (items) => items.map((item) => (item.broken ? null : { ...item.card, id: item.id, title: item.title })).filter(Boolean),
+  sanitizeCardData: (item) => (item.broken ? null : { ...item.card, id: item.id, title: item.title }),
 }))
 
 const { GET } = require('@src/app/api/authenticated/horizontal-list/timeline/route')
@@ -203,6 +203,25 @@ describe('list positions on horizontal-list', () => {
       { id: 'b', title: 'B', listPosition: 3 },
       { id: 'c', title: 'C', listPosition: 5 },
     ])
+  })
+
+  it('leaves the placeholder images off the cards for a caller that draws none', async () => {
+    const blurred = { posterBlurhash: 'iVBOR-poster', backdropBlurhash: 'iVBOR-backdrop', thumbnailBlurhash: 'iVBOR-thumb', posterURL: '/p.jpg' }
+    mockRecentlyWatched.mockImplementation(async () => [
+      { id: 'a', title: 'A', __listPosition: 2, card: blurred },
+      { id: 'b', title: 'B', __listPosition: 3, card: blurred },
+      { id: 'c', title: 'C', __listPosition: 6, card: blurred },
+    ])
+
+    const lean = await (await list('page=1&limit=3&positions=true&blur=false')).json()
+
+    expect(lean.currentItems).toEqual([{ id: 'b', title: 'B', posterURL: '/p.jpg', listPosition: 3 }])
+    expect(lean.previousItem).toEqual({ id: 'a', title: 'A', posterURL: '/p.jpg', listPosition: 2 })
+    expect(lean.nextItem).toEqual({ id: 'c', title: 'C', posterURL: '/p.jpg', listPosition: 6 })
+
+    // Every other caller still gets them: a card's own placeholder
+    const full = await (await list('page=1&limit=3')).json()
+    expect(full.currentItems[0]).toMatchObject(blurred)
   })
 
   it('sends no positions to a caller that did not ask: the other apps’ pages are unchanged', async () => {

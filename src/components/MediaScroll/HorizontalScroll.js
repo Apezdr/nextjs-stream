@@ -11,7 +11,6 @@ import {
   useSyncExternalStore,
   useId,
   useReducer,
-  useEffectEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
 import useSWR, { useSWRConfig, preload } from 'swr'
@@ -28,7 +27,7 @@ import { useLandingPagePopup } from '@src/contexts/LandingPagePopupContext'
 import RailScrubber from './scrubber/RailScrubber'
 import RailDatePicker from './scrubber/RailDatePicker'
 import ScrubCard from './scrubber/ScrubCard'
-import { BlockLoader, BLOCK_SIZE, pageFromBlocks } from './scrubber/blockLoader'
+import { BlockLoader, BLOCK_SIZE } from './scrubber/blockLoader'
 import { buildTimeline, dayAt, describeRange, monthNames } from './scrubber/timeline'
 
 // Define Peek Width
@@ -55,9 +54,10 @@ const RAIL_SWR_OPTIONS = {
 // strip. Dots stop being a way to get anywhere, and at a few hundred pages
 // they shrink to nothing.
 const SCRUB_MIN_PAGES = 10
-// How long the strip's handle rests on a page before the page's real cards
-// (posters and all) take the place of the lightweight ones
-const SCRUB_REST_MS = 140
+// How long the strip's handle rests on a page before the row asks for that
+// page's real cards (posters and all) to take the place of the lightweight
+// ones. Long enough that passing over a page slowly is not a request for it.
+const SCRUB_REST_MS = 250
 const TIMELINE_SWR_OPTIONS = {
   refreshInterval: 60000,
   revalidateOnFocus: true,
@@ -67,8 +67,9 @@ const TIMELINE_SWR_OPTIONS = {
 }
 
 /**
- * The cards the row shows while the strip's handle is over a page it has not
- * settled on: the page's positions and the card each has so far. `landed`
+ * The lightweight cards of a page: what the row shows while the strip's handle
+ * is over a page, and until that page's real cards arrive. The page's
+ * positions and the card each has so far. `landed`
  * (how many blocks have arrived) is not read. The loader's cards are not React
  * state, and passing it is what says they changed.
  */
@@ -166,7 +167,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   const leftArrowRef = useRef(null)
   const rightArrowRef = useRef(null)
 
-  const { cache, mutate } = useSWRConfig()
+  const { cache } = useSWRConfig()
 
   // Use shared hook for items per page calculation (eliminates redundant calculations)
   const itemsPerPage = useItemsPerPage()
@@ -220,11 +221,16 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     TIMELINE_SWR_OPTIONS
   )
   const timeline = useMemo(
-    () => (Array.isArray(timelineData?.days) ? buildTimeline(timelineData.days, timelineData.total) : null),
+    () => (Array.isArray(timelineData?.days) ? buildTimeline(timelineData?.days, timelineData?.total) : null),
     [timelineData]
   )
+  // The length of the list, as a plain number. The handlers below read this and
+  // never `timeline.total`: the React Compiler reads a property a callback uses
+  // while rendering, and `timeline` is null until the counts arrive.
+  const listTotal = timeline ? timeline.total : 0
 
-  // The cards a drag of the strip has fetched, in blocks, by list position
+  // The lightweight cards a drag of the strip has fetched, in blocks, by list
+  // position: no placeholder images (most of a card's weight) and no progress
   const [blocksLanded, blockLanded] = useReducer((count) => count + 1, 0)
   const [loader] = useState(
     () =>
@@ -236,8 +242,8 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
             sortOrder,
             limit: String(BLOCK_SIZE),
             page: String(block),
-            includeWatchHistory: 'true',
             positions: 'true',
+            blur: 'false',
           })
           const page = await fetcher(`/api/authenticated/horizontal-list?${params}`)
           if (!page || page.error || !Array.isArray(page.currentItems)) {
@@ -250,7 +256,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   )
   // List position of the first card under the strip's handle while it is dragged
   const [scrubFirst, setScrubFirst] = useState(null)
-  const scrubState = useRef({ first: null, travel: 0, restTimer: null, restingPage: null })
+  const scrubState = useRef({ first: null, travel: 0, restTimer: null })
 
   // New counts mean the list moved: a card's position no longer holds
   useEffect(() => {
@@ -330,7 +336,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   useEffect(() => {
     // Only prefetch once the real page size is known, and if we have valid pages
     // Not during a drag of the date strip: it passes hundreds of pages, and
-    // the page it settles on is put together from the cards already fetched
+    // rests on some of them for a moment
     if (isHydrated && totalPages > 0 && scrubFirst === null) {
       // Prefetch previous page (if exists)
       if (currentPage > 0) {
@@ -431,41 +437,12 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   const lastPage = Math.max(0, totalPages - 1)
   const pageAt = (position) => Math.min(lastPage, Math.max(0, Math.floor(position / itemsPerPage)))
 
-  // A page of real cards for SWR, put together from the cards a drag fetched.
-  // A page SWR already holds is left as the server gave it.
-  const seedPage = (pageIndex) => {
-    if (!timeline || pageIndex < 0 || pageIndex > lastPage) return false
-    const url = buildPrefetchURL(pageIndex)
-    if (cache.get(url)?.data) return true
-    const page = pageFromBlocks(loader, pageIndex * itemsPerPage, itemsPerPage, timeline.total)
-    if (!page) return false
-    mutate(url, page, { revalidate: false })
-    return true
-  }
-
-  // The real cards of a page take the place of the lightweight ones. While the
-  // handle is only resting (not `final`), a page whose cards have not arrived
-  // waits for them; when the drag ends, the row's own request fetches it.
-  const showPage = (pageIndex, final) => {
-    const state = scrubState.current
-    if (!seedPage(pageIndex) && !final) {
-      state.restingPage = pageIndex
-      return
-    }
-    state.restingPage = null
-    seedPage(pageIndex - 1)
-    seedPage(pageIndex + 1)
+  // The row moves to a page without sliding: its own request fetches the real
+  // cards, and the lightweight ones stay in view until they arrive
+  const showPage = (pageIndex) => {
     setDirection(0)
     setCurrentPage(pageIndex)
   }
-
-  const showRestingPage = useEffectEvent(() => {
-    const resting = scrubState.current.restingPage
-    if (resting !== null) showPage(resting, false)
-  })
-  useEffect(() => {
-    showRestingPage()
-  }, [blocksLanded])
 
   const handleScrubStart = () => {
     scrubState.current.travel = 0
@@ -481,25 +458,24 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     setScrubFirst(first)
 
     const lead = loader.blockOf(first)
-    const needed = loader.blocksFor(Math.max(0, first - 1), Math.min(timeline.total - 1, first + itemsPerPage))
+    const needed = loader.blocksFor(Math.max(0, first - 1), Math.min(listTotal - 1, first + itemsPerPage))
     const next = lead + state.travel
     loader.aim({
       lead,
       wanted: [lead, ...needed.filter((block) => block !== lead)],
-      ahead: state.travel !== 0 && next >= 0 && next * BLOCK_SIZE < timeline.total ? next : null,
+      ahead: state.travel !== 0 && next >= 0 && next * BLOCK_SIZE < listTotal ? next : null,
       paced: true,
     })
 
     clearTimeout(state.restTimer)
-    state.restingPage = null
-    state.restTimer = setTimeout(() => showPage(pageIndex, false), SCRUB_REST_MS)
+    state.restTimer = setTimeout(() => showPage(pageIndex), SCRUB_REST_MS)
   }
 
   const handleScrubEnd = (position) => {
     const state = scrubState.current
     clearTimeout(state.restTimer)
     loader.release()
-    showPage(pageAt(position), true)
+    showPage(pageAt(position))
     state.first = null
     state.travel = 0
     setScrubFirst(null)
@@ -508,13 +484,24 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   const isScrubbing = scrubFirst !== null
   // The handle is over a page the row has not settled on: lightweight cards
   const previewing = isScrubbing && scrubFirst !== currentPage * itemsPerPage
-  const preview =
-    previewing && timeline ? previewOf(loader, blocksLanded, scrubFirst, itemsPerPage, timeline.total) : []
   const shownFirst = isScrubbing ? scrubFirst : currentPage * itemsPerPage
+  // Also wanted while the page the row moved to is still loading: titles it
+  // already has beat placeholders
+  const preview =
+    scrubbable && timeline && (previewing || isPending)
+      ? previewOf(loader, blocksLanded, shownFirst, itemsPerPage, listTotal)
+      : []
+  const previewHasCards = preview.some((entry) => entry.item)
+  const previewCards = preview.map(({ position, isPeek, item, waiting }) => {
+    if (item) return <ScrubCard key={position} item={item} isPeek={isPeek} />
+    // Its block arrived without it: the library no longer holds this title
+    return waiting ? <SkeletonCard key={position} /> : null
+  })
   const rangeLabel = timeline
-    ? describeRange(timeline, shownFirst, Math.min(timeline.total - 1, shownFirst + itemsPerPage - 1))
+    ? describeRange(timeline, shownFirst, Math.min(listTotal - 1, shownFirst + itemsPerPage - 1))
     : ''
   const scrubDay = isScrubbing && timeline ? dayAt(timeline, scrubFirst) : null
+  const scrubMonthLabel = scrubDay ? `${monthNames(undefined, 'long')[scrubDay.month]} ${scrubDay.year}` : ''
   // Where the row's date button goes: beside its title (LandingPage)
   const headSlot = scrubbable && isHydrated ? document.getElementById(`rail-head-${listType}`) : null
   // As wide as the full cards, so the strip reads as theirs; a phone gets the whole width
@@ -572,17 +559,13 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
                 'absolute inset-0 flex gap-x-4 justify-center items-start'
               )}
             >
-              {preview.map(({ position, isPeek, item, waiting }) => {
-                if (item) return <ScrubCard key={position} item={item} isPeek={isPeek} />
-                // Its block arrived without it: the library no longer holds this title
-                return waiting ? <SkeletonCard key={position} /> : null
-              })}
+              {previewCards}
             </div>
           ) : null}
           {/* A finger covers the strip: say the month over the cards */}
-          {isScrubbing && isNarrow && scrubDay ? (
+          {isScrubbing && isNarrow && scrubMonthLabel ? (
             <div className="pointer-events-none absolute left-1/2 top-2 z-30 -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-4 py-1.5 text-base font-semibold text-[#060916] shadow-lg">
-              {monthNames(undefined, 'long')[scrubDay.month]} {scrubDay.year}
+              {scrubMonthLabel}
             </div>
           ) : null}
           {/* AnimatePresence allows components to animate out when removed */}
@@ -607,8 +590,13 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
               onAnimationComplete={() => setIsAnimating(false)}
             >
               {isPending ? (
-                // Render SkeletonCards during loading
-                <SkeletonList numberOfItems={numberOfItems} itemsPerPage={itemsPerPage} numberOfPeeks={numberOfPeeks} />
+                previewHasCards ? (
+                  // The strip already holds this page's titles: show them while its cards load
+                  previewCards
+                ) : (
+                  // Render SkeletonCards during loading
+                  <SkeletonList numberOfItems={numberOfItems} itemsPerPage={itemsPerPage} numberOfPeeks={numberOfPeeks} />
+                )
               ) : (
                 // Render actual Cards when data is loaded
                 itemsToRender.map(({ item, isPeek }, index) => {

@@ -21,7 +21,7 @@ const {
   monthNames,
   dateKey,
 } = require('@src/components/MediaScroll/scrubber/timeline')
-const { BlockLoader, pageFromBlocks, BLOCK_SIZE } = require('@src/components/MediaScroll/scrubber/blockLoader')
+const { BlockLoader, BLOCK_SIZE } = require('@src/components/MediaScroll/scrubber/blockLoader')
 
 // 16 November 2026, late evening
 const TODAY = new Date(2026, 10, 16, 22, 6)
@@ -34,7 +34,8 @@ const DAYS = [
   ['2026-09-01', 6], // 10-15
 ]
 const timeline = () => buildTimeline(DAYS, 16, TODAY)
-const plain = (text) => text.replace(/[   ]/g, ' ')
+// Intl puts thin or non-breaking spaces around the dash of a date range
+const plain = (text) => text.replace(new RegExp('[' + String.fromCharCode(0x2009, 0x202f, 0xa0) + ']', 'g'), ' ')
 
 describe('the months', () => {
   it('runs from this month back to the oldest, empty months included', () => {
@@ -266,32 +267,5 @@ describe('when a drag may ask the server for cards', () => {
     expect(loader.cards.size).toBe(0)
     expect(loader.loaded.size).toBe(0)
     expect(onChange).not.toHaveBeenCalled()
-  })
-
-  it('puts a page together from blocks, without the titles the library no longer holds', async () => {
-    loader.aim({ lead: 0, wanted: [0, 1], paced: false })
-    await settle()
-    // Position 46 is gone from the library: the block arrives without it
-    await answer(0, cardsOf(0).filter((card) => card.listPosition !== 46))
-    expect(pageFromBlocks(loader, 44, 4, 200)).toBeNull() // its next neighbour is in block 1
-
-    await answer(1)
-    const page = pageFromBlocks(loader, 44, 4, 200)
-
-    expect(page.currentItems.map((card) => card.listPosition)).toEqual([44, 45, 47])
-    expect(page.previousItem.listPosition).toBe(43)
-    expect(page.nextItem.listPosition).toBe(48)
-    expect(page.playlist).toBeNull()
-  })
-
-  it('gives the first and the last page no neighbour beyond the list', async () => {
-    loader.aim({ lead: 0, wanted: [0], paced: false })
-    await settle()
-    await answer(0, cardsOf(0).slice(0, 10))
-
-    expect(pageFromBlocks(loader, 0, 4, 10).previousItem).toBeNull()
-    expect(pageFromBlocks(loader, 8, 4, 10)).toMatchObject({ nextItem: null })
-    expect(pageFromBlocks(loader, 8, 4, 10).currentItems).toHaveLength(2)
-    expect(pageFromBlocks(loader, 12, 4, 10)).toBeNull()
   })
 })
