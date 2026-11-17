@@ -185,6 +185,11 @@ export const GET = async (req) => {
   const isTVdevice = searchParams.get('isTVdevice') === 'true'
   const shouldExposeAdditionalData = isTVdevice
   const includeWatchHistory = searchParams.get('includeWatchHistory') === 'true'
+  // Watch History only, and only when asked: each card says where it sits in
+  // the whole list (`listPosition`, 0 = most recent). Rows the library no
+  // longer holds are left out of a page, so a caller that keeps cards from
+  // several requests (the date strip's blocks) cannot place them by counting.
+  const withPositions = type === 'recentlyWatched' && searchParams.get('positions') === 'true'
   // Playlist params (for type=playlist)
   const playlistIdParam = searchParams.get('playlistId') || null
 
@@ -352,9 +357,14 @@ export const GET = async (req) => {
 
     let { previousItem, currentItems, nextItem } = split
 
-    // Strip the internal split marker before the items go any further
+    // Strip the internal split marker before the items go any further. A caller
+    // that asked for positions gets it back on the card (`listPosition`).
+    const listPositions = new Map()
     for (const item of [previousItem, ...currentItems, nextItem]) {
       if (item && typeof item === 'object') {
+        if (withPositions && Number.isInteger(item.__listPosition)) {
+          listPositions.set(item, item.__listPosition)
+        }
         delete item.__listPosition
       }
     }
@@ -379,13 +389,18 @@ export const GET = async (req) => {
       ...(contextByType[type] || {}),
       isTVdevice: isTVdevice
     }
-    let items = sanitizeCardItems(sorted, context, shouldExposeAdditionalData)
-    previousItem = previousItem
-      ? sanitizeCardData(previousItem, shouldExposeAdditionalData, context)
-      : null
-    nextItem = nextItem
-      ? sanitizeCardData(nextItem, shouldExposeAdditionalData, context)
-      : null
+    // A card is a new object holding only the fields a card needs, so its list
+    // position is put back on it here, card by card (a row can fail to make one)
+    const toCard = (row) => {
+      const card = sanitizeCardData(row, shouldExposeAdditionalData, context)
+      if (card && listPositions.has(row)) card.listPosition = listPositions.get(row)
+      return card
+    }
+    let items = withPositions
+      ? sorted.map(toCard).filter(Boolean)
+      : sanitizeCardItems(sorted, context, shouldExposeAdditionalData)
+    previousItem = previousItem ? toCard(previousItem) : null
+    nextItem = nextItem ? toCard(nextItem) : null
 
     // Single batched watch-history pass over page items and peeks together
     if (includeWatchHistory) {
