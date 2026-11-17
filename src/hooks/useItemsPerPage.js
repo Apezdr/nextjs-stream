@@ -35,7 +35,10 @@ const cardWidthAt = (screenWidth) => {
 }
 const getCardWidthSnapshot = () => globalCardWidth
 const PEEK_WIDTH = 50    // From HorizontalScroll PEEK_WIDTH constant
-const ARROW_WIDTH = 64   // w-16 = 64px per arrow
+// One arrow's width. On a phone it is 44px (w-11): still a full touch target,
+// and what lets two cards fit from 360px up. With 64px two cards needed 400px,
+// so the common 360-393px phones paged one title at a time.
+const arrowWidthAt = (screenWidth) => (screenWidth < 640 ? 44 : 64) // w-11 sm:w-16
 
 // Calculate items per page based on precise mathematical calculation
 const calculateItemsPerPage = () => {
@@ -50,7 +53,7 @@ const calculateItemsPerPage = () => {
   let availableWidth = screenWidth
   
   // Subtract arrows (both sides)
-  availableWidth -= (ARROW_WIDTH * 2)
+  availableWidth -= (arrowWidthAt(screenWidth) * 2)
   
   // Subtract peek widths (not on mobile)
   if (screenWidth >= 768) {

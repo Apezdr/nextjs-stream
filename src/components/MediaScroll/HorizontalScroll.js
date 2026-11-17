@@ -545,14 +545,14 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
             ref={leftArrowRef}
             onClick={() => moveScroll('left')}
             onMouseEnter={() => debouncedPrefetchPageData(currentPage - 1)}
-            className="text-white p-2 rounded-sm z-10 w-16 h-full flex items-center justify-center hover:bg-gray-700 transition-colors"
+            className="text-white p-2 rounded-sm z-10 w-11 sm:w-16 h-full flex items-center justify-center hover:bg-gray-700 transition-colors"
             aria-label="Previous Page"
           >
             <ChevronDoubleLeftIcon className="w-6 h-6" />
           </button>
         ) : (
           // Render empty div to maintain layout consistency
-          <div className="w-16 h-full"></div>
+          <div className="w-11 sm:w-16 h-full"></div>
         )}
 
         {/* Cards Container with Framer Motion */}
@@ -692,14 +692,14 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
             ref={rightArrowRef}
             onClick={() => moveScroll('right')}
             onMouseEnter={() => debouncedPrefetchPageData(currentPage + 1)}
-            className="text-white p-2 rounded-sm z-10 w-16 h-full flex items-center justify-center hover:bg-gray-700 transition-colors"
+            className="text-white p-2 rounded-sm z-10 w-11 sm:w-16 h-full flex items-center justify-center hover:bg-gray-700 transition-colors"
             aria-label="Next Page"
           >
             <ChevronDoubleRightIcon className="w-6 h-6" />
           </button>
         ) : (
           // Render empty div to maintain layout consistency
-          <div className="w-16 h-full"></div>
+          <div className="w-11 sm:w-16 h-full"></div>
         )}
       </div>
       {/* Pagination Indicators */}
