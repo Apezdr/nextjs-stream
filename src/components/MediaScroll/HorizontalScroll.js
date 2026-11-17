@@ -96,7 +96,28 @@ function previewOf(loader, landed, first, perPage, total) {
  */
 function useRailPage(apiEndpoint) {
   const isHydrated = useIsHydrated()
-  const { data, error, isLoading } = useSWR(isHydrated ? apiEndpoint : null, fetcher, RAIL_SWR_OPTIONS)
+  const { data, error, isLoading, mutate } = useSWR(isHydrated ? apiEndpoint : null, fetcher, RAIL_SWR_OPTIONS)
+
+  // Next keeps a page the viewer navigates away from and shows it again on
+  // Back, state and all (cacheComponents: the route sits in a hidden
+  // <Activity>). Its effects are stopped while it is hidden, this rail's poll
+  // among them, and RAIL_SWR_OPTIONS asks for nothing when cards are already
+  // held. So the page came back with the cards it left with, until the poll
+  // came round 10 s later: a title just watched was missing from Watch History.
+  // Ask again as the page comes back. What the viewer did while away is the
+  // thing they look for.
+  const awaySince = useRef(null)
+  useEffect(() => {
+    const since = awaySince.current
+    awaySince.current = null
+    // In development React runs every effect twice in a row. That is not a
+    // visit elsewhere, and nothing a rail shows changes within a second.
+    if (since !== null && Date.now() - since >= 1000) mutate()
+    return () => {
+      awaySince.current = Date.now()
+    }
+  }, [mutate])
+
   return {
     data,
     isHydrated,
