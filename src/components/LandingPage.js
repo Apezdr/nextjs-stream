@@ -74,7 +74,13 @@ async function CalendarSection({ calendarConfig }) {
 async function UserDependentSections({ userId, access }) {
   return (
     <>
-      <h2 className="text-xl font-bold text-left mt-4 ml-4">Watch History</h2>
+      <div className="mt-4 ml-4 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 className="text-xl font-bold text-left">Watch History</h2>
+        {/* A long history's row puts its date button here (HorizontalScroll's
+            date strip). On a phone it takes its own line, so the cards do not
+            move when "Today" appears beside it. */}
+        <div id="rail-head-recentlyWatched" className="flex min-h-9 items-center gap-1 empty:hidden max-sm:basis-full" />
+      </div>
       <Suspense>
         <HorizontalScrollContainer type="recentlyWatched" userId={userId} access={access} />
       </Suspense>

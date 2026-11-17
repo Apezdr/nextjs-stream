@@ -5,6 +5,7 @@ import throttle from 'lodash/throttle'
 
 // Global state for items per page calculation
 let globalItemsPerPage = null
+let globalCardWidth = null
 let globalListeners = new Set()
 
 // Subscribe to window resize events
@@ -24,6 +25,15 @@ const CARD_WIDTHS = {
 }
 
 const GAP = 16           // gap-x-4 = 16px
+export const CARD_GAP = GAP
+
+// A card's width at this screen width (matching Card.js getCollapsedWidth)
+const cardWidthAt = (screenWidth) => {
+  if (screenWidth < 640) return CARD_WIDTHS.mobile
+  if (screenWidth < 1024) return CARD_WIDTHS.tablet
+  return CARD_WIDTHS.desktop
+}
+const getCardWidthSnapshot = () => globalCardWidth
 const PEEK_WIDTH = 50    // From HorizontalScroll PEEK_WIDTH constant
 const ARROW_WIDTH = 64   // w-16 = 64px per arrow
 
@@ -34,14 +44,7 @@ const calculateItemsPerPage = () => {
   const screenWidth = window.innerWidth
   
   // Determine card size based on breakpoint (matching Card.js logic)
-  let cardWidth
-  if (screenWidth < 640) {
-    cardWidth = CARD_WIDTHS.mobile
-  } else if (screenWidth < 1024) {
-    cardWidth = CARD_WIDTHS.tablet
-  } else {
-    cardWidth = CARD_WIDTHS.desktop
-  }
+  const cardWidth = cardWidthAt(screenWidth)
   
   // Calculate available width for cards
   let availableWidth = screenWidth
@@ -65,9 +68,13 @@ const calculateItemsPerPage = () => {
 // Throttled window resize handler
 const handleResize = throttle(() => {
   const newItemsPerPage = calculateItemsPerPage()
-  if (newItemsPerPage !== globalItemsPerPage) {
-    console.log(`Global itemsPerPage changed from ${globalItemsPerPage} to ${newItemsPerPage}`)
+  const newCardWidth = cardWidthAt(window.innerWidth)
+  if (newItemsPerPage !== globalItemsPerPage || newCardWidth !== globalCardWidth) {
+    if (newItemsPerPage !== globalItemsPerPage) {
+      console.log(`Global itemsPerPage changed from ${globalItemsPerPage} to ${newItemsPerPage}`)
+    }
     globalItemsPerPage = newItemsPerPage
+    globalCardWidth = newCardWidth
     // Notify all subscribers
     globalListeners.forEach(listener => listener())
   }
@@ -76,6 +83,7 @@ const handleResize = throttle(() => {
 // Initialize global state and listeners
 if (typeof window !== 'undefined') {
   globalItemsPerPage = calculateItemsPerPage()
+  globalCardWidth = cardWidthAt(window.innerWidth)
   window.addEventListener('resize', handleResize)
 }
 
@@ -100,4 +108,13 @@ export function useItemsPerPage() {
   }, [])
   
   return itemsPerPage || 2
+}
+
+/**
+ * The width of one card at this screen width (128, 144 or 192), shared like
+ * the page size above. 128 is a phone-width screen. On the server and in the
+ * hydration render it reports the widest: nothing sized by it is drawn then.
+ */
+export function useCardWidth() {
+  return useSyncExternalStore(subscribe, getCardWidthSnapshot, () => CARD_WIDTHS.desktop) || CARD_WIDTHS.desktop
 }

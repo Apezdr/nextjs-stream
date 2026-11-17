@@ -10,7 +10,10 @@ import {
   Fragment,
   useSyncExternalStore,
   useId,
+  useReducer,
+  useEffectEvent,
 } from 'react'
+import { createPortal } from 'react-dom'
 import useSWR, { useSWRConfig, preload } from 'swr'
 import { classNames, fetcher } from '@src/utils'
 import { ChevronDoubleLeftIcon, ChevronDoubleRightIcon } from '@heroicons/react/20/solid'
@@ -19,8 +22,14 @@ import { motion, AnimatePresence } from 'framer-motion'
 import debounce from 'lodash/debounce'
 import { useSwipeable } from 'react-swipeable'
 import SkeletonList from './SkeletonList'
-import { useItemsPerPage } from '@src/hooks/useItemsPerPage'
+import SkeletonCard from './SkeletonCard'
+import { useItemsPerPage, useCardWidth, CARD_GAP } from '@src/hooks/useItemsPerPage'
 import { useLandingPagePopup } from '@src/contexts/LandingPagePopupContext'
+import RailScrubber from './scrubber/RailScrubber'
+import RailDatePicker from './scrubber/RailDatePicker'
+import ScrubCard from './scrubber/ScrubCard'
+import { BlockLoader, BLOCK_SIZE, pageFromBlocks } from './scrubber/blockLoader'
+import { buildTimeline, dayAt, describeRange, monthNames } from './scrubber/timeline'
 
 // Define Peek Width
 const PEEK_WIDTH = 50 // Adjust based on design
@@ -40,6 +49,42 @@ const RAIL_SWR_OPTIONS = {
   revalidateOnReconnect: false,
   dedupingInterval: 10000, // OPTIMIZATION: Increased from 5s to 10s for better deduplication
   revalidateIfStale: false, // OPTIMIZATION: Don't revalidate if data exists and is fresh
+}
+
+// Past this many pages the Watch History row trades its page dots for the date
+// strip. Dots stop being a way to get anywhere, and at a few hundred pages
+// they shrink to nothing.
+const SCRUB_MIN_PAGES = 10
+// How long the strip's handle rests on a page before the page's real cards
+// (posters and all) take the place of the lightweight ones
+const SCRUB_REST_MS = 140
+const TIMELINE_SWR_OPTIONS = {
+  refreshInterval: 60000,
+  revalidateOnFocus: true,
+  revalidateOnReconnect: false,
+  dedupingInterval: 10000,
+  errorRetryCount: 3,
+}
+
+/**
+ * The cards the row shows while the strip's handle is over a page it has not
+ * settled on: the page's positions and the card each has so far. `landed`
+ * (how many blocks have arrived) is not read. The loader's cards are not React
+ * state, and passing it is what says they changed.
+ */
+function previewOf(loader, landed, first, perPage, total) {
+  const entries = []
+  const add = (position, isPeek) =>
+    entries.push({
+      position,
+      isPeek,
+      item: loader.cards.get(position),
+      waiting: !loader.loaded.has(loader.blockOf(position)),
+    })
+  if (first > 0) add(first - 1, true)
+  for (let position = first; position < Math.min(total, first + perPage); position++) add(position, false)
+  if (first + perPage < total) add(first + perPage, true)
+  return entries
 }
 
 /**
@@ -93,19 +138,19 @@ const PaginationIndicators = memo(
 PaginationIndicators.displayName = 'PaginationIndicators'
 
 // Animation Variants
+// A direction of 0 is the date strip putting a page where it was already
+// showing that page's cards: no slide and no fade.
 const variants = {
-  enter: (direction) => ({
-    x: direction > 0 ? 400 : -400,
-    opacity: 0,
-  }),
+  enter: (direction) =>
+    direction === 0 ? { x: 0, opacity: 1 } : { x: direction > 0 ? 400 : -400, opacity: 0 },
   center: {
     x: 0,
     opacity: 1,
   },
-  exit: (direction) => ({
-    x: direction < 0 ? 400 : -400,
-    opacity: 0,
-  }),
+  exit: (direction) =>
+    direction === 0
+      ? { x: 0, opacity: 0, transition: { duration: 0 } }
+      : { x: direction < 0 ? 400 : -400, opacity: 0 },
 }
 
 // HorizontalScroll Component
@@ -116,13 +161,12 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   const [direction, setDirection] = useState(0) // Track direction
   const [isAnimating, setIsAnimating] = useState(false) // Track animation state
   const uniqueId = useId() // Unique ID for this instance
-  const containerRef = useRef(null)
   const cardsContainerRef = useRef(null)
   const cardRef = useRef(null)
   const leftArrowRef = useRef(null)
   const rightArrowRef = useRef(null)
 
-  const { cache } = useSWRConfig()
+  const { cache, mutate } = useSWRConfig()
 
   // Use shared hook for items per page calculation (eliminates redundant calculations)
   const itemsPerPage = useItemsPerPage()
@@ -161,6 +205,64 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   const apiEndpoint = buildPrefetchURL(currentPage)
 
   const { data, isHydrated, isPending, failed } = useRailPage(apiEndpoint)
+
+  // The date strip: Watch History only, once the dots stop being useful
+  const cardWidth = useCardWidth()
+  const isNarrow = cardWidth === 128
+  const scrubbable = listType === 'recentlyWatched' && totalPages > SCRUB_MIN_PAGES
+  // A day is the viewer's own, so the counts are asked for in their time zone
+  const timeZone = isHydrated ? Intl.DateTimeFormat().resolvedOptions().timeZone : null
+  const { data: timelineData } = useSWR(
+    scrubbable && timeZone
+      ? `/api/authenticated/horizontal-list/timeline?tz=${encodeURIComponent(timeZone)}`
+      : null,
+    fetcher,
+    TIMELINE_SWR_OPTIONS
+  )
+  const timeline = useMemo(
+    () => (Array.isArray(timelineData?.days) ? buildTimeline(timelineData.days, timelineData.total) : null),
+    [timelineData]
+  )
+
+  // The cards a drag of the strip has fetched, in blocks, by list position
+  const [blocksLanded, blockLanded] = useReducer((count) => count + 1, 0)
+  const [loader] = useState(
+    () =>
+      new BlockLoader({
+        fetchBlock: async (block) => {
+          const params = new URLSearchParams({
+            type: 'recentlyWatched',
+            sort,
+            sortOrder,
+            limit: String(BLOCK_SIZE),
+            page: String(block),
+            includeWatchHistory: 'true',
+            positions: 'true',
+          })
+          const page = await fetcher(`/api/authenticated/horizontal-list?${params}`)
+          if (!page || page.error || !Array.isArray(page.currentItems)) {
+            throw new Error('The list did not answer')
+          }
+          return [page.previousItem, ...page.currentItems, page.nextItem]
+        },
+        onChange: blockLanded,
+      })
+  )
+  // List position of the first card under the strip's handle while it is dragged
+  const [scrubFirst, setScrubFirst] = useState(null)
+  const scrubState = useRef({ first: null, travel: 0, restTimer: null, restingPage: null })
+
+  // New counts mean the list moved: a card's position no longer holds
+  useEffect(() => {
+    loader.clear()
+  }, [loader, timelineData])
+  useEffect(() => {
+    const state = scrubState.current
+    return () => {
+      clearTimeout(state.restTimer)
+      loader.clear()
+    }
+  }, [loader])
 
   const ongoingPrefetches = useRef(new Set())
 
@@ -227,7 +329,9 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
 
   useEffect(() => {
     // Only prefetch once the real page size is known, and if we have valid pages
-    if (isHydrated && totalPages > 0) {
+    // Not during a drag of the date strip: it passes hundreds of pages, and
+    // the page it settles on is put together from the cards already fetched
+    if (isHydrated && totalPages > 0 && scrubFirst === null) {
       // Prefetch previous page (if exists)
       if (currentPage > 0) {
         prefetchPageData(currentPage - 1)
@@ -237,7 +341,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
         prefetchPageData(currentPage + 1)
       }
     }
-  }, [currentPage, prefetchPageData, totalPages, isHydrated])
+  }, [currentPage, prefetchPageData, totalPages, isHydrated, scrubFirst])
   // Prepare items including previous and next peek items
   const itemsToRender = useMemo(() => {
     if (!data) return []
@@ -323,6 +427,99 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     swipeDuration: 250,
   })
 
+  // --- The date strip's side of the row ---
+  const lastPage = Math.max(0, totalPages - 1)
+  const pageAt = (position) => Math.min(lastPage, Math.max(0, Math.floor(position / itemsPerPage)))
+
+  // A page of real cards for SWR, put together from the cards a drag fetched.
+  // A page SWR already holds is left as the server gave it.
+  const seedPage = (pageIndex) => {
+    if (!timeline || pageIndex < 0 || pageIndex > lastPage) return false
+    const url = buildPrefetchURL(pageIndex)
+    if (cache.get(url)?.data) return true
+    const page = pageFromBlocks(loader, pageIndex * itemsPerPage, itemsPerPage, timeline.total)
+    if (!page) return false
+    mutate(url, page, { revalidate: false })
+    return true
+  }
+
+  // The real cards of a page take the place of the lightweight ones. While the
+  // handle is only resting (not `final`), a page whose cards have not arrived
+  // waits for them; when the drag ends, the row's own request fetches it.
+  const showPage = (pageIndex, final) => {
+    const state = scrubState.current
+    if (!seedPage(pageIndex) && !final) {
+      state.restingPage = pageIndex
+      return
+    }
+    state.restingPage = null
+    seedPage(pageIndex - 1)
+    seedPage(pageIndex + 1)
+    setDirection(0)
+    setCurrentPage(pageIndex)
+  }
+
+  const showRestingPage = useEffectEvent(() => {
+    const resting = scrubState.current.restingPage
+    if (resting !== null) showPage(resting, false)
+  })
+  useEffect(() => {
+    showRestingPage()
+  }, [blocksLanded])
+
+  const handleScrubStart = () => {
+    scrubState.current.travel = 0
+  }
+
+  // Every move of the handle: show the page under it, and tell the loader
+  const handleScrub = (position) => {
+    const state = scrubState.current
+    const pageIndex = pageAt(position)
+    const first = pageIndex * itemsPerPage
+    if (state.first !== null && first !== state.first) state.travel = first > state.first ? 1 : -1
+    state.first = first
+    setScrubFirst(first)
+
+    const lead = loader.blockOf(first)
+    const needed = loader.blocksFor(Math.max(0, first - 1), Math.min(timeline.total - 1, first + itemsPerPage))
+    const next = lead + state.travel
+    loader.aim({
+      lead,
+      wanted: [lead, ...needed.filter((block) => block !== lead)],
+      ahead: state.travel !== 0 && next >= 0 && next * BLOCK_SIZE < timeline.total ? next : null,
+      paced: true,
+    })
+
+    clearTimeout(state.restTimer)
+    state.restingPage = null
+    state.restTimer = setTimeout(() => showPage(pageIndex, false), SCRUB_REST_MS)
+  }
+
+  const handleScrubEnd = (position) => {
+    const state = scrubState.current
+    clearTimeout(state.restTimer)
+    loader.release()
+    showPage(pageAt(position), true)
+    state.first = null
+    state.travel = 0
+    setScrubFirst(null)
+  }
+
+  const isScrubbing = scrubFirst !== null
+  // The handle is over a page the row has not settled on: lightweight cards
+  const previewing = isScrubbing && scrubFirst !== currentPage * itemsPerPage
+  const preview =
+    previewing && timeline ? previewOf(loader, blocksLanded, scrubFirst, itemsPerPage, timeline.total) : []
+  const shownFirst = isScrubbing ? scrubFirst : currentPage * itemsPerPage
+  const rangeLabel = timeline
+    ? describeRange(timeline, shownFirst, Math.min(timeline.total - 1, shownFirst + itemsPerPage - 1))
+    : ''
+  const scrubDay = isScrubbing && timeline ? dayAt(timeline, scrubFirst) : null
+  // Where the row's date button goes: beside its title (LandingPage)
+  const headSlot = scrubbable && isHydrated ? document.getElementById(`rail-head-${listType}`) : null
+  // As wide as the full cards, so the strip reads as theirs; a phone gets the whole width
+  const stripWidth = isNarrow ? undefined : itemsPerPage * cardWidth + (itemsPerPage - 1) * CARD_GAP
+
   // Handle error state
   if (failed) {
     return (
@@ -334,9 +531,14 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   }
 
   return (
-    <div className="relative my-8 w-full flex flex-col justify-center overflow-hidden max-w-[100vw]" {...swipeHandlers}>
-      {/* Carousel Container */}
-      <div className="flex flex-row items-center w-full relative" ref={containerRef}>
+    <div
+      className={classNames(
+        scrubbable ? 'mt-8 mb-2' : 'my-8',
+        'relative w-full flex flex-col justify-center overflow-hidden max-w-[100vw]'
+      )}
+    >
+      {/* Carousel Container. A swipe pages the row; the date strip under it takes its own drags */}
+      <div className="flex flex-row items-center w-full relative" {...swipeHandlers}>
         {/* Left Arrow */}
         {areItems && totalPages > 1 && currentPage > 0 ? (
           <button
@@ -363,12 +565,33 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
               : 'justify-center'
           )}
         >
+          {previewing ? (
+            <div
+              className={classNames(
+                scrubFirst === 0 ? 'ml-3' : '',
+                'absolute inset-0 flex gap-x-4 justify-center items-start'
+              )}
+            >
+              {preview.map(({ position, isPeek, item, waiting }) => {
+                if (item) return <ScrubCard key={position} item={item} isPeek={isPeek} />
+                // Its block arrived without it: the library no longer holds this title
+                return waiting ? <SkeletonCard key={position} /> : null
+              })}
+            </div>
+          ) : null}
+          {/* A finger covers the strip: say the month over the cards */}
+          {isScrubbing && isNarrow && scrubDay ? (
+            <div className="pointer-events-none absolute left-1/2 top-2 z-30 -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-4 py-1.5 text-base font-semibold text-[#060916] shadow-lg">
+              {monthNames(undefined, 'long')[scrubDay.month]} {scrubDay.year}
+            </div>
+          ) : null}
           {/* AnimatePresence allows components to animate out when removed */}
           <AnimatePresence custom={direction} initial={false}>
             <motion.div
               key={`${uniqueId}-${currentPage}`}
               className={classNames(
                 currentPage === 0 ? 'ml-3' : '',
+                previewing ? 'invisible' : '',
                 'absolute inset-0 flex gap-x-4 justify-center items-start cards-row'
               )}
               variants={variants}
@@ -480,7 +703,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
         )}
       </div>
       {/* Pagination Indicators */}
-      {areItems && totalPages > 1 && (
+      {areItems && totalPages > 1 && !scrubbable && (
         <PaginationIndicators
           totalPages={totalPages}
           currentPage={currentPage}
@@ -489,6 +712,45 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
           prefetchPageData={debouncedPrefetchPageData}
         />
       )}
+      {/* The date strip, in the dots' place */}
+      {scrubbable && timeline ? (
+        <RailScrubber
+          timeline={timeline}
+          first={shownFirst}
+          width={stripWidth}
+          page={pageAt(shownFirst)}
+          pageCount={totalPages}
+          valueText={rangeLabel}
+          onScrubStart={handleScrubStart}
+          onScrub={handleScrub}
+          onScrubEnd={handleScrubEnd}
+          onStep={(delta) => moveScroll(delta > 0 ? 'right' : 'left')}
+          onJump={(position) => goToPage(pageAt(position))}
+        />
+      ) : null}
+      {scrubbable && timeline && headSlot
+        ? createPortal(
+            <>
+              <RailDatePicker
+                timeline={timeline}
+                first={shownFirst}
+                label={rangeLabel}
+                compact={isNarrow}
+                onJump={(position) => goToPage(pageAt(position))}
+              />
+              {currentPage > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => goToPage(0)}
+                  className="rounded-full px-3 py-1 text-sm font-medium text-blue-300 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 max-sm:py-2"
+                >
+                  {isNarrow ? 'Today' : 'Back to today'}
+                </button>
+              ) : null}
+            </>,
+            headSlot
+          )
+        : null}
     </div>
   )
 })
